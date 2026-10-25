@@ -157,7 +157,8 @@ public sealed class App : Application, IAppHost
         Hotkeys.Set("openbox", t.Enabled ? t.OpenBoxHotkey : null, () => Dispatcher.BeginInvoke(_translator.OpenBox));
         Hotkeys.Set("ocr", o.Enabled ? o.Hotkey : null, () => Dispatcher.BeginInvoke(_ocr.CaptureScreen));
 
-        bool needHook = _translator.WantsMouseHook || (g.Enabled && g.PinchEnabled && g.SkipNativePinchApps);
+        bool needHook = _translator.WantsMouseHook
+                        || (g.Enabled && g.PinchEnabled && g.PinchAction != PinchAction.ScreenZoom && g.SkipNativePinchApps);
         if (needHook) _mouseHook.Start();
         else _mouseHook.Stop();
         if (!_translator.WantsMouseHook) _translator.HideIcon();
@@ -212,6 +213,10 @@ public sealed class App : Application, IAppHost
     }
 
     public void ShowHistoryEntry(HistoryEntry entry) => Popup.ShowHistoryEntry(entry);
+
+    public bool? WindowsPinchOffApplied => _gestures.WindowsPinchOffApplied;
+
+    public void ResetZoom() => _gestures.ResetZoom();
 
     public bool TouchpadPresent => _touchpadPresent ??= TouchpadReader.IsTouchpadPresent();
 

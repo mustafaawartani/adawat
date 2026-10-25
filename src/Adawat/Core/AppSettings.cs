@@ -16,7 +16,7 @@ public enum CaptureMethod { Automatic, ClipboardOnly, AccessibilityOnly }
 
 public enum SwipeAction { MouseButtons, AltArrows, BrowserKeys }
 
-public enum PinchAction { CtrlWheel, CtrlPlusMinus }
+public enum PinchAction { ScreenZoom, CtrlWheel, CtrlPlusMinus }
 
 public sealed class AppSettings
 {
@@ -24,6 +24,8 @@ public sealed class AppSettings
     public bool RunElevated { get; set; }
     public ThemeMode Theme { get; set; } = ThemeMode.System;
     public bool FirstRunCompleted { get; set; }
+    /// <summary>Lets newer versions update settings saved by older ones.</summary>
+    public int SettingsVersion { get; set; } = SettingsStore.CurrentVersion;
 
     public TranslatorSettings Translator { get; set; } = new();
     public OcrSettings Ocr { get; set; } = new();
@@ -101,13 +103,16 @@ public sealed class GestureSettings
     public bool PinchEnabled { get; set; } = true;
     public int PinchSensitivity { get; set; } = 50;
     public bool InvertPinch { get; set; }
-    public PinchAction PinchAction { get; set; } = PinchAction.CtrlWheel;
-    /// <summary>Skip our zoom when Windows already turns the pinch into zoom for the app.</summary>
+    /// <summary>Screen zoom magnifies the picture like Chrome; the others make apps change their own zoom.</summary>
+    public PinchAction PinchAction { get; set; } = PinchAction.ScreenZoom;
+    public double MaxScreenZoom { get; set; } = 5;
+    /// <summary>Turn off Windows' own pinch (Ctrl+wheel: icon size, font size) so it does not fight the screen zoom.</summary>
+    public bool TurnOffWindowsPinch { get; set; } = true;
+    /// <summary>What Windows' pinch setting was before Adawat turned it off, to put it back later.</summary>
+    public bool? WindowsPinchBefore { get; set; }
+    /// <summary>Skip app zoom (Ctrl+wheel modes) when Windows already turns the pinch into zoom for the app.</summary>
     public bool SkipNativePinchApps { get; set; } = true;
-    public List<string> PinchDisabledApps { get; set; } = new()
-    {
-        "chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe", "vivaldi.exe", "arc.exe", "zen.exe",
-    };
+    public List<string> PinchDisabledApps { get; set; } = new();
 
     public bool DisableInFullscreen { get; set; } = true;
 }
@@ -122,7 +127,23 @@ public static class SettingsStore
         Converters = { new JsonStringEnumConverter() },
     };
 
+    public const int CurrentVersion = 2;
+
     public static string FilePath => Path.Combine(AppPaths.DataFolder, "settings.json");
+
+    /// <summary>Moves settings saved by an older version to the current defaults where behavior changed.</summary>
+    private static AppSettings Upgrade(AppSettings settings)
+    {
+        if (settings.SettingsVersion < 2)
+        {
+            // 0.1.1 zoomed apps with Ctrl+wheel; pinch now magnifies the screen like Chrome, everywhere.
+            settings.Gestures.PinchAction = PinchAction.ScreenZoom;
+            settings.Gestures.PinchDisabledApps = new();
+            settings.Gestures.TurnOffWindowsPinch = true;
+        }
+        settings.SettingsVersion = CurrentVersion;
+        return settings;
+    }
 
     public static AppSettings Load()
     {
@@ -130,8 +151,14 @@ public static class SettingsStore
         {
             if (File.Exists(FilePath))
             {
-                var settings = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(FilePath), JsonOptions);
-                if (settings != null) return settings;
+                // Files written before versioning have no SettingsVersion and read as 0.
+                var json = File.ReadAllText(FilePath);
+                var settings = JsonSerializer.Deserialize<AppSettings>(json, JsonOptions);
+                if (settings != null)
+                {
+                    if (!json.Contains("\"SettingsVersion\"", StringComparison.OrdinalIgnoreCase)) settings.SettingsVersion = 0;
+                    return Upgrade(settings);
+                }
             }
         }
         catch (Exception ex)

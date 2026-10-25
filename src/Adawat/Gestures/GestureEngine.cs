@@ -14,6 +14,10 @@ public enum GestureEventKind
     SwipeEnd,
     /// <summary>One pinch zoom step. <see cref="GestureEvent.Direction"/> is +1 for zoom in, -1 for zoom out.</summary>
     ZoomStep,
+    /// <summary>A pinch is in progress. <see cref="GestureEvent.Progress"/> is the finger distance relative to when the pinch began (2 = twice as far apart).</summary>
+    PinchUpdate,
+    /// <summary>The fingers of a pinch lifted.</summary>
+    PinchEnd,
 }
 
 /// <summary>
@@ -51,6 +55,7 @@ public sealed class GestureEngine
     private const double DecideDistance = 0.035;   // movement before we decide what the fingers are doing
     private const double QuickFlickMs = 260;        // a fast flick needs less distance
     private const double QuickFlickProgress = 0.55;
+    private const double MinPinchSpread = 0.08;     // avoids huge ratios when the fingers start very close
 
     private readonly List<GestureEvent> _events = new();
     private Session? _session;
@@ -65,7 +70,7 @@ public sealed class GestureEngine
         public int Id;
         public int Fingers;
         public HashSet<int> Ids = new();
-        public double StartX, StartY, StartSpread, LastStepSpread;
+        public double StartX, StartY, StartSpread, LastStepSpread, PinchBaseSpread;
         public long StartMs;
         public Mode Mode;
         public int SwipeDirection;
@@ -151,6 +156,9 @@ public sealed class GestureEngine
             if (canPinch && Math.Abs(dSpread) >= DecideDistance && Math.Abs(dSpread) > move * 0.8)
             {
                 s.Mode = Mode.Pinch;
+                // Measure the pinch from here, so the zoom starts smoothly at 1x.
+                s.PinchBaseSpread = Math.Max(spread, MinPinchSpread);
+                s.LastStepSpread = spread;
             }
             else if (canSwipe && Math.Abs(dx) >= DecideDistance && Math.Abs(dx) >= 2 * Math.Abs(dy) && Math.Abs(dSpread) < Math.Abs(dx) * 0.6)
             {
@@ -177,6 +185,10 @@ public sealed class GestureEngine
             }
             case Mode.Pinch:
             {
+                double scale = Math.Max(spread, MinPinchSpread * 0.25) / s.PinchBaseSpread;
+                if (Config.InvertPinch) scale = 1 / scale;
+                _events.Add(new GestureEvent(GestureEventKind.PinchUpdate, scale >= 1 ? 1 : -1, scale, SessionId: s.Id));
+
                 double step = Config.PinchStepRatio;
                 if (s.LastStepSpread <= 1e-4) s.LastStepSpread = Math.Max(spread, 1e-4);
                 double ratio = spread / s.LastStepSpread;
@@ -196,6 +208,7 @@ public sealed class GestureEngine
     {
         var s = _session;
         _session = null;
+        if (s?.Mode == Mode.Pinch) _events.Add(new GestureEvent(GestureEventKind.PinchEnd, 0, SessionId: s.Id));
         if (s == null || s.Mode != Mode.Swipe) return;
 
         bool quick = timestampMs - s.StartMs <= QuickFlickMs && s.SwipeProgress >= QuickFlickProgress;

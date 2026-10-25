@@ -11,6 +11,12 @@ public interface IAppHost
     HistoryStore History { get; }
     bool TouchpadPresent { get; }
 
+    /// <summary>Null when Adawat is not managing Windows' pinch; otherwise whether turning it off took effect right away.</summary>
+    bool? WindowsPinchOffApplied { get; }
+
+    /// <summary>Returns the screen zoom to normal size.</summary>
+    void ResetZoom();
+
     /// <summary>Saves the settings and applies them right away.</summary>
     void SettingsChanged();
 

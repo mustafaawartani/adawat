@@ -6,7 +6,7 @@ A small, lightweight toolkit for Windows 10/11 that lives in the system tray.
 |---|---|
 | **Translator** | Translate selected text in *any* app (browsers, File Explorer, PDF readers, Office, chat apps…) with Google Translate. Shortcut, a small button next to your selection, or a typing box like the Chrome extension. |
 | **Text from screen** | Drag around any part of the screen (pictures, videos, scanned PDFs) to read its text, then copy or translate it. Also in the right-click menu of image files. |
-| **Touchpad gestures** | Browser-style gestures everywhere: two-finger swipe for **back / forward** and **pinch to zoom**, in File Explorer and other apps. |
+| **Touchpad gestures** | Browser-style gestures everywhere: two-finger swipe for **back / forward**, and **pinch to zoom the screen** like Chrome (a visual zoom around the pointer, nothing in the app changes size). |
 
 ## Install
 
@@ -26,7 +26,7 @@ To update, install the new setup over the old one. To remove it: *Settings → A
 | `Alt+3` | Open the translator box |
 | Select text with the mouse | A small translate button appears next to it |
 | Two-finger swipe right / left | Back / forward |
-| Pinch / spread two fingers | Zoom out / in (in File Explorer: icon size) |
+| Spread / pinch two fingers | Zoom the screen in / back out, like Chrome. Move the pointer to look around. |
 
 All shortcuts and behaviors can be changed in the settings (click the tray icon → Settings).
 
@@ -38,6 +38,7 @@ All shortcuts and behaviors can be changed in the settings (click the tray icon 
 - History of translations with search.
 - Text from screen: language (uses the OCR languages installed in Windows), translate/copy right after, keep line breaks, Explorer menu.
 - Gestures: fingers (2/3/4), sensitivity, direction, how to go back (mouse back button, Alt+arrows, browser keys), arrow animation, per-app lists, pause in full-screen games.
+- Pinch: screen zoom like Chrome (zoom speed, maximum zoom) or app zoom (Ctrl+wheel, Ctrl+Plus/Minus). Screen zoom turns off Windows' own pinch, which otherwise changes icon and text size; Ctrl+Plus/Minus keep working. Turning screen zoom off puts Windows' setting back.
 - Run as administrator (so the tools also work in admin windows), theme (light/dark/system), start with Windows.
 
 ## How it works
@@ -46,7 +47,7 @@ All shortcuts and behaviors can be changed in the settings (click the tray icon 
 - **Selected text**: sends Ctrl+C to the active app and restores your clipboard afterwards; falls back to Windows UI Automation (and never sends Ctrl+C in terminals).
 - **Translation**: the free Google Translate endpoint used by the browser extension. No account or API key.
 - **OCR**: the `Windows.Media.Ocr` engine built into Windows (offline). Add languages in *Settings → Time & language → Language & region*.
-- **Gestures**: reads the Precision Touchpad through the Raw Input API, recognizes swipes and pinches, then sends the mouse back/forward buttons or Ctrl+mouse wheel to the window under the pointer.
+- **Gestures**: reads the Precision Touchpad through the Raw Input API, recognizes swipes and pinches, then sends the mouse back/forward buttons to the window under the pointer. Pinch uses the Windows magnification API (the one behind Windows Magnifier) to magnify the screen.
 
 Settings, history and the log are in `%AppData%\Adawat`.
 

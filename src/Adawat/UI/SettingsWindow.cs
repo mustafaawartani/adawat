@@ -341,22 +341,54 @@ public sealed class SettingsWindow : FluentWindow
 
         p.Children.Add(Ui.SectionTitle("Pinch to zoom"));
         p.Children.Add(Ui.Card(SymbolRegular.ZoomIn24, "Pinch to zoom",
-            "Spread two fingers to zoom in and pinch to zoom out. In File Explorer this makes icons bigger or smaller.",
+            "Spread two fingers to zoom in and pinch them to zoom back out.",
             Ui.Toggle(g.PinchEnabled, v => { g.PinchEnabled = v; Changed(); })));
-        p.Children.Add(Ui.Card(SymbolRegular.Gauge24, "Pinch sensitivity", "Higher means a smaller pinch makes one zoom step.",
-            SliderRow(1, 100, g.PinchSensitivity, v => $"{v:0}", v => { g.PinchSensitivity = (int)Math.Round(v); Changed(); })));
-        p.Children.Add(Ui.Card(SymbolRegular.ArrowSwap24, "Reverse zoom direction", null,
-            Ui.Toggle(g.InvertPinch, v => { g.InvertPinch = v; Changed(); })));
-        p.Children.Add(Ui.Card(SymbolRegular.ZoomFit24, "How to zoom", null,
+        p.Children.Add(Ui.Card(SymbolRegular.ZoomFit24, "What pinching does",
+            "Screen zoom magnifies what you see around the pointer, like pinching in Chrome: nothing in the app changes size, " +
+            "and moving the pointer moves around the zoomed view. The other options ask the app itself to zoom (icon or text size).",
             EnumCombo(g.PinchAction, new Dictionary<PinchAction, string>
             {
-                [PinchAction.CtrlWheel] = "Ctrl + mouse wheel (recommended)",
-                [PinchAction.CtrlPlusMinus] = "Ctrl + Plus / Minus",
-            }, v => { g.PinchAction = v; Changed(); })));
-        p.Children.Add(Ui.Card(SymbolRegular.Checkmark24, "Skip apps that Windows already zooms",
-            "Windows itself zooms some apps on pinch. Adawat notices this and stays out of the way so you don't zoom twice.",
-            Ui.Toggle(g.SkipNativePinchApps, v => { g.SkipNativePinchApps = v; Changed(); })));
-        p.Children.Add(AppListCard("Apps where pinching does nothing", "Browsers already zoom on pinch, so they are listed by default.",
+                [PinchAction.ScreenZoom] = "Screen zoom, like Chrome (recommended)",
+                [PinchAction.CtrlWheel] = "App zoom: Ctrl + mouse wheel",
+                [PinchAction.CtrlPlusMinus] = "App zoom: Ctrl + Plus / Minus",
+            }, v => { g.PinchAction = v; Changed(); ShowPage("Touchpad gestures"); })));
+
+        if (g.PinchAction == PinchAction.ScreenZoom)
+        {
+            p.Children.Add(Ui.Card(SymbolRegular.Gauge24, "Zoom speed", "How fast the screen zooms as your fingers move.",
+                SliderRow(1, 100, g.PinchSensitivity, v => $"{v:0}", v => { g.PinchSensitivity = (int)Math.Round(v); Changed(); })));
+            p.Children.Add(Ui.Card(SymbolRegular.ZoomIn24, "Maximum zoom", null,
+                SliderRow(2, 10, g.MaxScreenZoom, v => $"{v:0}x", v => { g.MaxScreenZoom = Math.Round(v); Changed(); })));
+
+            string windowsPinch = _host.WindowsPinchOffApplied switch
+            {
+                true => "Done: Windows' own pinch is off, so File Explorer and other apps no longer change icon or text size when you pinch. Ctrl + Plus / Minus and Ctrl + mouse wheel still work as usual.",
+                false => "Adawat saved this change, but Windows will only use it after you sign out and back in. To do it right now: open the touchpad settings → Scroll & zoom → untick \"Pinch to zoom\".",
+                _ => "When on, pinching no longer makes apps change icon or text size; only the screen zoom happens. Ctrl + Plus / Minus still work.",
+            };
+            var windowsPinchControls = new StackPanel { Orientation = Orientation.Horizontal };
+            if (_host.WindowsPinchOffApplied == false)
+            {
+                var open = Ui.Button("Touchpad settings", () => OpenUri("ms-settings:devices-touchpad"));
+                open.Margin = new Thickness(0, 0, 12, 0);
+                windowsPinchControls.Children.Add(open);
+            }
+            windowsPinchControls.Children.Add(Ui.Toggle(g.TurnOffWindowsPinch, v => { g.TurnOffWindowsPinch = v; Changed(); ShowPage("Touchpad gestures"); }));
+            p.Children.Add(Ui.Card(SymbolRegular.Prohibited24, "Turn off Windows' own pinch (icon and text size)", windowsPinch, windowsPinchControls));
+            p.Children.Add(Ui.Card(SymbolRegular.ArrowReset24, "Back to normal size", "Pinch your fingers together, or use this button.",
+                Ui.Button("Reset zoom", () => _host.ResetZoom())));
+        }
+        else
+        {
+            p.Children.Add(Ui.Card(SymbolRegular.Gauge24, "Pinch sensitivity", "Higher means a smaller pinch makes one zoom step.",
+                SliderRow(1, 100, g.PinchSensitivity, v => $"{v:0}", v => { g.PinchSensitivity = (int)Math.Round(v); Changed(); })));
+            p.Children.Add(Ui.Card(SymbolRegular.Checkmark24, "Skip apps that Windows already zooms",
+                "Windows itself zooms some apps on pinch. Adawat notices this and stays out of the way so you don't zoom twice.",
+                Ui.Toggle(g.SkipNativePinchApps, v => { g.SkipNativePinchApps = v; Changed(); })));
+        }
+        p.Children.Add(Ui.Card(SymbolRegular.ArrowSwap24, "Reverse zoom direction", null,
+            Ui.Toggle(g.InvertPinch, v => { g.InvertPinch = v; Changed(); })));
+        p.Children.Add(AppListCard("Apps where pinching does nothing", "One program per line, e.g. game.exe",
             g.PinchDisabledApps, v => { g.PinchDisabledApps = v; Changed(); }));
 
         p.Children.Add(Ui.SectionTitle("Other"));

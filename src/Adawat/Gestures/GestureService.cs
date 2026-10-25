@@ -16,6 +16,7 @@ public sealed class GestureService : IDisposable
     private readonly TouchpadReader _reader;
     private readonly GestureEngine _engine = new();
     private readonly DispatcherTimer _idleTimer;
+    private readonly ScreenMagnifier _magnifier = new();
     private SwipeArrowOverlay? _overlay;
 
     private int _targetSession = -1;
@@ -27,6 +28,9 @@ public sealed class GestureService : IDisposable
     private long _lastFrameMs;
 
     public bool IsRunning { get; private set; }
+
+    /// <summary>Null when Adawat is not managing Windows' pinch; otherwise whether turning it off took effect right away.</summary>
+    public bool? WindowsPinchOffApplied { get; private set; }
 
     public GestureService(AppSettings settings, MessageWindow window)
     {
@@ -60,6 +64,12 @@ public sealed class GestureService : IDisposable
             InvertPinch = g.InvertPinch,
         };
 
+        _magnifier.MaxLevel = Math.Clamp(g.MaxScreenZoom, 1.5, 10);
+        _magnifier.Gain = 0.8 + 1.7 * Math.Clamp(g.PinchSensitivity, 1, 100) / 100.0;
+        bool screenZoom = g.Enabled && g.PinchEnabled && g.PinchAction == PinchAction.ScreenZoom;
+        if (!screenZoom) _magnifier.Reset();
+        ApplyWindowsPinch(screenZoom && g.TurnOffWindowsPinch);
+
         bool wanted = g.Enabled && (g.SwipeEnabled || g.PinchEnabled);
         if (wanted && !IsRunning) IsRunning = _reader.Start();
         else if (!wanted && IsRunning)
@@ -69,6 +79,30 @@ public sealed class GestureService : IDisposable
             Handle(_engine.Reset(Environment.TickCount64));
         }
     }
+
+    /// <summary>
+    /// Windows' own pinch makes apps change icon/font size. Screen zoom turns it off (remembering
+    /// the old value) and puts it back when screen zoom is no longer used.
+    /// </summary>
+    private void ApplyWindowsPinch(bool turnOff)
+    {
+        var g = _settings.Gestures;
+        if (turnOff)
+        {
+            var current = WindowsTouchpad.IsPinchZoomEnabled();
+            g.WindowsPinchBefore ??= current ?? true;
+            if (current != false) WindowsPinchOffApplied = WindowsTouchpad.SetPinchZoom(false);
+            else WindowsPinchOffApplied ??= true;
+        }
+        else
+        {
+            if (g.WindowsPinchBefore == true) WindowsTouchpad.SetPinchZoom(true);
+            g.WindowsPinchBefore = null;
+            WindowsPinchOffApplied = null;
+        }
+    }
+
+    public void ResetZoom() => _magnifier.Reset();
 
     /// <summary>Called by the mouse hook (any thread) for real wheel events, to detect apps where Windows already zooms on pinch.</summary>
     public void NotifyNativeWheel() => _lastNativeWheelMs = Environment.TickCount64;
@@ -111,7 +145,18 @@ public sealed class GestureService : IDisposable
                         if (e.Committed && EnsureTarget(e.SessionId, swipe: true)) Navigate(e.Direction > 0);
                         break;
 
+                    case GestureEventKind.PinchUpdate:
+                        if (_settings.Gestures.PinchAction != PinchAction.ScreenZoom) break;
+                        if (!EnsureTarget(e.SessionId, swipe: false)) break;
+                        _magnifier.UpdatePinch(e.Progress);
+                        break;
+
+                    case GestureEventKind.PinchEnd:
+                        if (_settings.Gestures.PinchAction == PinchAction.ScreenZoom) _magnifier.EndPinch();
+                        break;
+
                     case GestureEventKind.ZoomStep:
+                        if (_settings.Gestures.PinchAction == PinchAction.ScreenZoom) break;
                         if (!EnsureTarget(e.SessionId, swipe: false)) break;
                         // Windows turns a pinch into Ctrl+wheel for some apps by itself. While those
                         // wheel events keep arriving, zooming too would double every step.
@@ -179,6 +224,7 @@ public sealed class GestureService : IDisposable
     {
         _idleTimer.Stop();
         _reader.Dispose();
+        _magnifier.Dispose();
         _overlay?.Close();
     }
 }

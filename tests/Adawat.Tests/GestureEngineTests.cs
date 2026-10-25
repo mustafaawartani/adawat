@@ -147,4 +147,42 @@ public class GestureEngineTests
         Assert.True(new GestureConfig { SwipeSensitivity = 90 }.SwipeDistance < new GestureConfig { SwipeSensitivity = 10 }.SwipeDistance);
         Assert.True(new GestureConfig { PinchSensitivity = 90 }.PinchStepRatio < new GestureConfig { PinchSensitivity = 10 }.PinchStepRatio);
     }
+
+    [Fact]
+    public void PinchReportsSmoothScaleStartingNearOne()
+    {
+        var engine = new GestureEngine();
+        var frames = Enumerable.Range(0, 21).Select(i =>
+        {
+            double half = 0.1 + i * 0.01; // distance grows from 0.2 to 0.6
+            return (Two(0.5 - half, 0.3, 0.5 + half, 0.3), 1000L + i * 20);
+        }).Append((Array.Empty<TouchContact>(), 1500L));
+        var events = Run(engine, frames);
+        var updates = events.Where(e => e.Kind == GestureEventKind.PinchUpdate).Select(e => e.Progress).ToList();
+        Assert.NotEmpty(updates);
+        Assert.InRange(updates[0], 0.9, 1.2);            // no jump when the pinch is recognized
+        Assert.True(updates[^1] > 2);                    // fingers ended ~2.5x further apart than at recognition
+        Assert.Equal(updates.OrderBy(x => x), updates);  // grows steadily
+        Assert.Equal(GestureEventKind.PinchEnd, events[^1].Kind);
+    }
+
+    [Fact]
+    public void PinchInReportsScaleBelowOne()
+    {
+        var engine = new GestureEngine();
+        var frames = Enumerable.Range(0, 21).Select(i =>
+        {
+            double half = 0.3 - i * 0.01;
+            return (Two(0.5 - half, 0.3, 0.5 + half, 0.3), 1000L + i * 20);
+        });
+        var last = Run(engine, frames).Last(e => e.Kind == GestureEventKind.PinchUpdate);
+        Assert.True(last.Progress < 0.8);
+    }
+
+    [Fact]
+    public void SwipeDoesNotProducePinchEvents()
+    {
+        var events = Run(new GestureEngine(), Swipe(0.4, 600));
+        Assert.DoesNotContain(events, e => e.Kind is GestureEventKind.PinchUpdate or GestureEventKind.PinchEnd);
+    }
 }

@@ -1,0 +1,56 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  VERSION: 0.1.${{ github.run_number }}
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Test
+        run: dotnet test tests/Adawat.Tests/Adawat.Tests.csproj -c Release
+
+      - name: Publish app
+        run: dotnet publish src/Adawat/Adawat.csproj -c Release -r win-x64 --self-contained true -p:Version=${{ env.VERSION }} -p:DebugType=none -o publish
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
+          & $iscc "/DAppVersion=${{ env.VERSION }}" installer\Adawat.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Adawat-Setup-${{ env.VERSION }}
+          path: installer/Output/Adawat-Setup-*.exe
+
+      - name: Publish release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSION }}
+          name: Adawat ${{ env.VERSION }}
+          body: |
+            Download **Adawat-Setup-${{ env.VERSION }}.exe** below and run it. No administrator rights needed.
+            If Windows SmartScreen warns about an unknown publisher, click "More info" → "Run anyway".
+          files: installer/Output/Adawat-Setup-*.exe
+          make_latest: true

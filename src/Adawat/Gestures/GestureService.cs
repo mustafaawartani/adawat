@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.Windows.Threading;
 using Adawat.Core;
 using Adawat.Interop;
@@ -26,6 +27,8 @@ public sealed class GestureService : IDisposable
     private bool _overlayShown;
     private long _lastNativeWheelMs;
     private long _lastFrameMs;
+    private volatile bool _zoomed;
+    private bool _scrollPaused;
 
     public bool IsRunning { get; private set; }
 
@@ -37,6 +40,14 @@ public sealed class GestureService : IDisposable
         _settings = settings;
         _reader = new TouchpadReader(window);
         _reader.Frame += OnFrame;
+        _magnifier.ZoomedChanged += OnZoomedChanged;
+
+        // Adawat may have been closed while zoomed: give back two-finger scrolling.
+        if (settings.Gestures.ScrollPausedByAdawat)
+        {
+            WindowsTouchpad.SetTwoFingerScroll(true);
+            settings.Gestures.ScrollPausedByAdawat = false;
+        }
         _idleTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(120) };
         _idleTimer.Tick += (_, _) =>
         {
@@ -66,6 +77,8 @@ public sealed class GestureService : IDisposable
 
         _magnifier.MaxLevel = Math.Clamp(g.MaxScreenZoom, 1.5, 10);
         _magnifier.Gain = 0.8 + 1.7 * Math.Clamp(g.PinchSensitivity, 1, 100) / 100.0;
+        _magnifier.PanSpeed = 0.6 + 2.4 * Math.Clamp(g.PanSpeed, 1, 100) / 100.0;
+        _magnifier.InvertPan = g.InvertPan;
         bool screenZoom = g.Enabled && g.PinchEnabled && g.PinchAction == PinchAction.ScreenZoom;
         if (!screenZoom) _magnifier.Reset();
         ApplyWindowsPinch(screenZoom && g.TurnOffWindowsPinch);
@@ -104,12 +117,47 @@ public sealed class GestureService : IDisposable
 
     public void ResetZoom() => _magnifier.Reset();
 
+    /// <summary>
+    /// While zoomed, two fingers move the zoom instead of scrolling the app underneath, like Chrome.
+    /// Windows' two-finger scrolling is paused (not saved, so a restart always brings it back) and
+    /// put back when the zoom returns to normal size.
+    /// </summary>
+    private void OnZoomedChanged(bool zoomed)
+    {
+        _zoomed = zoomed;
+        var g = _settings.Gestures;
+        if (zoomed)
+        {
+            if (WindowsTouchpad.IsTwoFingerScrollEnabled() == true && WindowsTouchpad.SetTwoFingerScroll(false))
+            {
+                _scrollPaused = true;
+                g.ScrollPausedByAdawat = true;
+                SettingsStore.Save(_settings);
+            }
+        }
+        else if (_scrollPaused)
+        {
+            WindowsTouchpad.SetTwoFingerScroll(true);
+            _scrollPaused = false;
+            g.ScrollPausedByAdawat = false;
+            SettingsStore.Save(_settings);
+        }
+    }
+
+    /// <summary>
+    /// Called on the mouse hook thread for each real wheel event. While zoomed, scroll events made
+    /// by the touchpad (fingers on it right now) are swallowed so the app does not scroll; a real
+    /// mouse wheel still works.
+    /// </summary>
+    public bool ShouldBlockWheel() => _zoomed && Environment.TickCount64 - Interlocked.Read(ref _lastFrameMs) < 150;
+
     /// <summary>Called by the mouse hook (any thread) for real wheel events, to detect apps where Windows already zooms on pinch.</summary>
     public void NotifyNativeWheel() => _lastNativeWheelMs = Environment.TickCount64;
 
     private void OnFrame(IReadOnlyList<TouchContact> contacts)
     {
-        _lastFrameMs = Environment.TickCount64;
+        Interlocked.Exchange(ref _lastFrameMs, Environment.TickCount64);
+        _engine.Config.PanMode = _magnifier.IsZoomed && _settings.Gestures.PinchAction == PinchAction.ScreenZoom;
         if (contacts.Count > 0 && !_idleTimer.IsEnabled) _idleTimer.Start();
         Handle(_engine.Process(contacts, _lastFrameMs));
     }
@@ -153,6 +201,14 @@ public sealed class GestureService : IDisposable
 
                     case GestureEventKind.PinchEnd:
                         if (_settings.Gestures.PinchAction == PinchAction.ScreenZoom) _magnifier.EndPinch();
+                        break;
+
+                    case GestureEventKind.PanUpdate:
+                        _magnifier.Pan(e.DeltaX, e.DeltaY);
+                        break;
+
+                    case GestureEventKind.PanEnd:
+                        _magnifier.EndPan(e.DeltaX, e.DeltaY);
                         break;
 
                     case GestureEventKind.ZoomStep:

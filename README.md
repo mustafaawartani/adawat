@@ -26,7 +26,8 @@ To update, install the new setup over the old one. To remove it: *Settings → A
 | `Alt+3` | Open the translator box |
 | Select text with the mouse | A small translate button appears next to it |
 | Two-finger swipe right / left | Back / forward |
-| Spread / pinch two fingers | Zoom the screen in / back out, like Chrome. Move the pointer to look around. |
+| Spread / pinch two fingers | Zoom the screen in / back out, like Chrome |
+| Slide two fingers while zoomed | Move around the zoomed screen in any direction (the app does not scroll) |
 
 All shortcuts and behaviors can be changed in the settings (click the tray icon → Settings).
 

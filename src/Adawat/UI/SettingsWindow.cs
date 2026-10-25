@@ -359,6 +359,12 @@ public sealed class SettingsWindow : FluentWindow
                 SliderRow(1, 100, g.PinchSensitivity, v => $"{v:0}", v => { g.PinchSensitivity = (int)Math.Round(v); Changed(); })));
             p.Children.Add(Ui.Card(SymbolRegular.ZoomIn24, "Maximum zoom", null,
                 SliderRow(2, 10, g.MaxScreenZoom, v => $"{v:0}x", v => { g.MaxScreenZoom = Math.Round(v); Changed(); })));
+            p.Children.Add(Ui.Card(SymbolRegular.ArrowMove24, "Moving around while zoomed",
+                "While zoomed, slide two fingers in any direction to move the zoomed view, like in Chrome. " +
+                "The app underneath does not scroll and back/forward swipes pause until you zoom out.",
+                SliderRow(1, 100, g.PanSpeed, v => $"{v:0}", v => { g.PanSpeed = (int)Math.Round(v); Changed(); })));
+            p.Children.Add(Ui.Card(SymbolRegular.ArrowSwap24, "Reverse moving direction", "Off: the picture follows your fingers, like Chrome.",
+                Ui.Toggle(g.InvertPan, v => { g.InvertPan = v; Changed(); })));
 
             string windowsPinch = _host.WindowsPinchOffApplied switch
             {

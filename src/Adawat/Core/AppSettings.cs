@@ -106,6 +106,12 @@ public sealed class GestureSettings
     /// <summary>Screen zoom magnifies the picture like Chrome; the others make apps change their own zoom.</summary>
     public PinchAction PinchAction { get; set; } = PinchAction.ScreenZoom;
     public double MaxScreenZoom { get; set; } = 5;
+    /// <summary>1..100: how far the zoomed view moves when panning with two fingers.</summary>
+    public int PanSpeed { get; set; } = 40;
+    /// <summary>False: the picture follows the fingers, like Chrome.</summary>
+    public bool InvertPan { get; set; }
+    /// <summary>Set while Adawat has paused Windows' two-finger scrolling during a zoom.</summary>
+    public bool ScrollPausedByAdawat { get; set; }
     /// <summary>Turn off Windows' own pinch (Ctrl+wheel: icon size, font size) so it does not fight the screen zoom.</summary>
     public bool TurnOffWindowsPinch { get; set; } = true;
     /// <summary>What Windows' pinch setting was before Adawat turned it off, to put it back later.</summary>

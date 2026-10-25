@@ -22,6 +22,12 @@ public sealed class MouseHook : IDisposable
 
     public event Action<MouseHookEvent>? MouseEvent;
 
+    /// <summary>
+    /// Asked on the hook thread for every real wheel event; returning true swallows it so no app
+    /// sees it. Must be very fast.
+    /// </summary>
+    public Func<bool>? BlockWheel { get; set; }
+
     public bool IsRunning => _thread != null;
 
     public MouseHook()
@@ -85,6 +91,10 @@ public sealed class MouseHook : IDisposable
                     {
                         bool text = kind == MouseEventKind.LeftDown && WindowInfo.IsLikelyTextCursor();
                         MouseEvent(new MouseHookEvent(kind.Value, data.pt.X, data.pt.Y, Environment.TickCount64, text));
+                    }
+                    if (kind == MouseEventKind.Wheel && BlockWheel?.Invoke() == true)
+                    {
+                        return new IntPtr(1);
                     }
                 }
             }

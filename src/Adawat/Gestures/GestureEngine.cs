@@ -18,12 +18,17 @@ public enum GestureEventKind
     PinchUpdate,
     /// <summary>The fingers of a pinch lifted.</summary>
     PinchEnd,
+    /// <summary>Two fingers moved while the screen is zoomed. <see cref="GestureEvent.DeltaX"/>/<see cref="GestureEvent.DeltaY"/> are the movement since the last frame.</summary>
+    PanUpdate,
+    /// <summary>The fingers of a pan lifted. <see cref="GestureEvent.DeltaX"/>/<see cref="GestureEvent.DeltaY"/> are the finger speed per second (for a glide).</summary>
+    PanEnd,
 }
 
 /// <summary>
 /// <see cref="Direction"/>: for swipes, -1 = back, +1 = forward; for zoom, +1 = in, -1 = out.
 /// </summary>
-public readonly record struct GestureEvent(GestureEventKind Kind, int Direction, double Progress = 0, bool Committed = false, int SessionId = 0);
+public readonly record struct GestureEvent(GestureEventKind Kind, int Direction, double Progress = 0, bool Committed = false, int SessionId = 0,
+    double DeltaX = 0, double DeltaY = 0);
 
 public sealed class GestureConfig
 {
@@ -34,6 +39,12 @@ public sealed class GestureConfig
     public bool PinchEnabled { get; set; } = true;
     public int PinchSensitivity { get; set; } = 50;
     public bool InvertPinch { get; set; }
+
+    /// <summary>
+    /// True while the screen is zoomed: two-finger movement then pans the zoomed view
+    /// (in any direction) instead of swiping back/forward.
+    /// </summary>
+    public bool PanMode { get; set; }
 
     /// <summary>Horizontal travel (in touchpad widths) needed to trigger back/forward.</summary>
     public double SwipeDistance => Lerp(0.45, 0.12, Math.Clamp(SwipeSensitivity, 1, 100) / 100.0);
@@ -50,7 +61,7 @@ public sealed class GestureConfig
 /// </summary>
 public sealed class GestureEngine
 {
-    private enum Mode { Undecided, Swipe, Pinch, Ignored }
+    private enum Mode { Undecided, Swipe, Pinch, Pan, Ignored }
 
     private const double DecideDistance = 0.035;   // movement before we decide what the fingers are doing
     private const double QuickFlickMs = 260;        // a fast flick needs less distance
@@ -75,6 +86,8 @@ public sealed class GestureEngine
         public Mode Mode;
         public int SwipeDirection;
         public double SwipeProgress;
+        public double LastX, LastY, PanStartSpread, VelocityX, VelocityY;
+        public long LastMs;
     }
 
     /// <summary>Feeds one frame (all fingers currently touching). Returns the resulting events.</summary>
@@ -160,7 +173,16 @@ public sealed class GestureEngine
                 s.PinchBaseSpread = Math.Max(spread, MinPinchSpread);
                 s.LastStepSpread = spread;
             }
-            else if (canSwipe && Math.Abs(dx) >= DecideDistance && Math.Abs(dx) >= 2 * Math.Abs(dy) && Math.Abs(dSpread) < Math.Abs(dx) * 0.6)
+            else if (Config.PanMode && s.Fingers == 2 && move >= DecideDistance * 0.4)
+            {
+                // Zoomed in: the fingers move the zoomed view, like in Chrome.
+                s.Mode = Mode.Pan;
+                s.LastX = s.StartX;
+                s.LastY = s.StartY;
+                s.LastMs = timestampMs;
+                s.PanStartSpread = spread;
+            }
+            else if (!Config.PanMode && canSwipe && Math.Abs(dx) >= DecideDistance && Math.Abs(dx) >= 2 * Math.Abs(dy) && Math.Abs(dSpread) < Math.Abs(dx) * 0.6)
             {
                 s.Mode = Mode.Swipe;
             }
@@ -171,8 +193,31 @@ public sealed class GestureEngine
             }
         }
 
+        // While panning, a clear change in finger distance turns into a pinch.
+        if (s.Mode == Mode.Pan && Config.PinchEnabled && Math.Abs(spread - s.PanStartSpread) >= DecideDistance * 1.5)
+        {
+            _events.Add(new GestureEvent(GestureEventKind.PanEnd, 0, SessionId: s.Id));
+            s.Mode = Mode.Pinch;
+            s.PinchBaseSpread = Math.Max(spread, MinPinchSpread);
+            s.LastStepSpread = spread;
+        }
+
         switch (s.Mode)
         {
+            case Mode.Pan:
+            {
+                double mx = cx - s.LastX, my = cy - s.LastY;
+                long dt = Math.Max(1, timestampMs - s.LastMs);
+                // Smoothed finger speed (touchpad widths per second), used for the glide after lifting.
+                s.VelocityX = s.VelocityX * 0.6 + mx * 1000.0 / dt * 0.4;
+                s.VelocityY = s.VelocityY * 0.6 + my * 1000.0 / dt * 0.4;
+                s.LastX = cx;
+                s.LastY = cy;
+                s.LastMs = timestampMs;
+                if (mx != 0 || my != 0)
+                    _events.Add(new GestureEvent(GestureEventKind.PanUpdate, 0, SessionId: s.Id, DeltaX: mx, DeltaY: my));
+                break;
+            }
             case Mode.Swipe:
             {
                 int direction = dx > 0 ? -1 : 1; // fingers to the right = back, like Chrome
@@ -209,6 +254,13 @@ public sealed class GestureEngine
         var s = _session;
         _session = null;
         if (s?.Mode == Mode.Pinch) _events.Add(new GestureEvent(GestureEventKind.PinchEnd, 0, SessionId: s.Id));
+        if (s?.Mode == Mode.Pan)
+        {
+            // Fingers that stopped before lifting should not glide.
+            bool stopped = timestampMs - s.LastMs > 80;
+            _events.Add(new GestureEvent(GestureEventKind.PanEnd, 0, SessionId: s.Id,
+                DeltaX: stopped ? 0 : s.VelocityX, DeltaY: stopped ? 0 : s.VelocityY));
+        }
         if (s == null || s.Mode != Mode.Swipe) return;
 
         bool quick = timestampMs - s.StartMs <= QuickFlickMs && s.SwipeProgress >= QuickFlickProgress;

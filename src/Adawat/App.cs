@@ -80,6 +80,7 @@ public sealed class App : Application, IAppHost
         _gestures = new GestureService(Settings, _messages);
         _mouseHook = new MouseHook();
         _mouseHook.MouseEvent += OnMouse;
+        _mouseHook.BlockWheel = _gestures.ShouldBlockWheel;
         _tray = new TrayIcon(Settings,
             openBox: () => _translator.OpenBox(),
             translateSelection: () => _translator.TranslateSelection(),
@@ -158,7 +159,8 @@ public sealed class App : Application, IAppHost
         Hotkeys.Set("ocr", o.Enabled ? o.Hotkey : null, () => Dispatcher.BeginInvoke(_ocr.CaptureScreen));
 
         bool needHook = _translator.WantsMouseHook
-                        || (g.Enabled && g.PinchEnabled && g.PinchAction != PinchAction.ScreenZoom && g.SkipNativePinchApps);
+                        || (g.Enabled && g.PinchEnabled && g.PinchAction == PinchAction.ScreenZoom) // blocks app scrolling while zoomed
+                        || (g.Enabled && g.PinchEnabled && g.SkipNativePinchApps);
         if (needHook) _mouseHook.Start();
         else _mouseHook.Stop();
         if (!_translator.WantsMouseHook) _translator.HideIcon();

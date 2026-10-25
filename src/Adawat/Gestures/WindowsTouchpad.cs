@@ -16,6 +16,7 @@ public static class WindowsTouchpad
     private const uint SPI_GETTOUCHPADPARAMETERS = 0x00AE;
     private const uint SPI_SETTOUCHPADPARAMETERS = 0x00AF;
     private const uint SPIF_UPDATEINIFILE = 0x01, SPIF_SENDCHANGE = 0x02;
+    private const int PanBit = 1 << 7;           // panEnabled ("Drag two fingers to scroll") in the second flags word
     private const int ZoomBit = 1 << 8;          // zoomEnabled in the second flags word
     private const int FlagsOffset = 16;          // versionNumber, maxSupportedContacts, legacyFeatures, flags1, flags2
     private const string RegistryKey = @"Software\Microsoft\Windows\CurrentVersion\PrecisionTouchPad";
@@ -110,33 +111,7 @@ public static class WindowsTouchpad
     /// </summary>
     public static bool SetPinchZoom(bool enabled)
     {
-        bool applied = false;
-        uint size = FindSize();
-        if (size > 0)
-        {
-            var buffer = Marshal.AllocHGlobal(256);
-            try
-            {
-                Clear(buffer, 256);
-                Marshal.WriteInt32(buffer, 0, 1);
-                if (SystemParametersInfo(SPI_GETTOUCHPADPARAMETERS, size, buffer, 0) && LooksValid(buffer))
-                {
-                    int flags = Marshal.ReadInt32(buffer, FlagsOffset);
-                    flags = enabled ? flags | ZoomBit : flags & ~ZoomBit;
-                    Marshal.WriteInt32(buffer, FlagsOffset, flags);
-                    applied = SystemParametersInfo(SPI_SETTOUCHPADPARAMETERS, size, buffer, SPIF_UPDATEINIFILE | SPIF_SENDCHANGE)
-                              && IsPinchZoomEnabled() == enabled;
-                }
-            }
-            catch (Exception ex)
-            {
-                Log.Error("Could not change the Windows pinch setting", ex);
-            }
-            finally
-            {
-                Marshal.FreeHGlobal(buffer);
-            }
-        }
+        bool applied = SetFlag(ZoomBit, enabled, persist: true) && IsPinchZoomEnabled() == enabled;
 
         if (!applied)
         {
@@ -152,5 +127,59 @@ public static class WindowsTouchpad
         }
         Log.Info($"Windows pinch zoom {(enabled ? "on" : "off")} ({(applied ? "applied" : "saved for next sign-in")})");
         return applied;
+    }
+
+    /// <summary>
+    /// Pauses or resumes Windows' two-finger scrolling without saving it (a restart always brings
+    /// it back). Used while the screen is zoomed, so two fingers move the zoom and not the app.
+    /// Returns false if this Windows does not allow it.
+    /// </summary>
+    public static bool SetTwoFingerScroll(bool enabled) => SetFlag(PanBit, enabled, persist: false);
+
+    /// <summary>True/false if two-finger scrolling is on/off, null if it cannot be read.</summary>
+    public static bool? IsTwoFingerScrollEnabled()
+    {
+        uint size = FindSize();
+        if (size == 0) return null;
+        var buffer = Marshal.AllocHGlobal(256);
+        try
+        {
+            Clear(buffer, 256);
+            Marshal.WriteInt32(buffer, 0, 1);
+            if (SystemParametersInfo(SPI_GETTOUCHPADPARAMETERS, size, buffer, 0) && LooksValid(buffer))
+                return (Marshal.ReadInt32(buffer, FlagsOffset) & PanBit) != 0;
+            return null;
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
+    }
+
+    /// <summary>Reads the touchpad settings, changes one flag and writes them back.</summary>
+    private static bool SetFlag(int bit, bool enabled, bool persist)
+    {
+        uint size = FindSize();
+        if (size == 0) return false;
+        var buffer = Marshal.AllocHGlobal(256);
+        try
+        {
+            Clear(buffer, 256);
+            Marshal.WriteInt32(buffer, 0, 1);
+            if (!SystemParametersInfo(SPI_GETTOUCHPADPARAMETERS, size, buffer, 0) || !LooksValid(buffer)) return false;
+            int flags = Marshal.ReadInt32(buffer, FlagsOffset);
+            if (((flags & bit) != 0) == enabled) return true;
+            Marshal.WriteInt32(buffer, FlagsOffset, enabled ? flags | bit : flags & ~bit);
+            return SystemParametersInfo(SPI_SETTOUCHPADPARAMETERS, size, buffer, persist ? SPIF_UPDATEINIFILE | SPIF_SENDCHANGE : 0);
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Could not change a touchpad setting", ex);
+            return false;
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
     }
 }

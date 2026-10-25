@@ -185,4 +185,47 @@ public class GestureEngineTests
         var events = Run(new GestureEngine(), Swipe(0.4, 600));
         Assert.DoesNotContain(events, e => e.Kind is GestureEventKind.PinchUpdate or GestureEventKind.PinchEnd);
     }
+
+    [Fact]
+    public void WhileZoomedTwoFingersPanInAnyDirectionInsteadOfSwiping()
+    {
+        var engine = new GestureEngine { Config = new GestureConfig { PanMode = true } };
+        // Diagonal movement, then lift.
+        var frames = Enumerable.Range(0, 21).Select(i => (Two(0.3 + i * 0.01, 0.3 + i * 0.008, 0.4 + i * 0.01, 0.31 + i * 0.008), 1000L + i * 10))
+            .Append((Array.Empty<TouchContact>(), 1215L));
+        var events = Run(engine, frames);
+        Assert.DoesNotContain(events, e => e.Kind is GestureEventKind.SwipeUpdate or GestureEventKind.SwipeEnd);
+        var pans = events.Where(e => e.Kind == GestureEventKind.PanUpdate).ToList();
+        Assert.NotEmpty(pans);
+        Assert.InRange(pans.Sum(p => p.DeltaX), 0.15, 0.21);
+        Assert.InRange(pans.Sum(p => p.DeltaY), 0.12, 0.17);
+        var end = events.Last();
+        Assert.Equal(GestureEventKind.PanEnd, end.Kind);
+        Assert.True(end.DeltaX > 0.3); // still moving (about 1 touchpad width per second) when lifted: glide
+    }
+
+    [Fact]
+    public void WhileZoomedPinchStillZooms()
+    {
+        var engine = new GestureEngine { Config = new GestureConfig { PanMode = true } };
+        var frames = Enumerable.Range(0, 21).Select(i =>
+        {
+            double half = 0.1 + i * 0.01;
+            return (Two(0.5 - half, 0.3, 0.5 + half, 0.3), 1000L + i * 20);
+        });
+        var events = Run(engine, frames);
+        Assert.Contains(events, e => e.Kind == GestureEventKind.PinchUpdate);
+        Assert.DoesNotContain(events, e => e.Kind == GestureEventKind.PanUpdate);
+    }
+
+    [Fact]
+    public void FingersThatStopBeforeLiftingDoNotGlide()
+    {
+        var engine = new GestureEngine { Config = new GestureConfig { PanMode = true } };
+        var moving = Enumerable.Range(0, 11).Select(i => (Two(0.3 + i * 0.01, 0.3, 0.4 + i * 0.01, 0.31), 1000L + i * 10));
+        var resting = Enumerable.Range(1, 15).Select(i => (Two(0.4, 0.3, 0.5, 0.31), 1100L + i * 10));
+        var end = Run(engine, moving.Concat(resting).Append((Array.Empty<TouchContact>(), 1260L))).Last();
+        Assert.Equal(GestureEventKind.PanEnd, end.Kind);
+        Assert.True(Math.Abs(end.DeltaX) < 0.05);
+    }
 }

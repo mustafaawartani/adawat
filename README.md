@@ -49,7 +49,7 @@ All shortcuts and behaviors can be changed in the settings (click the tray icon 
 
 - Written in C# / .NET 8 with WPF and [WPF UI](https://github.com/lepoco/wpfui) (Windows 11 look). One small process, roughly 0% CPU while idle.
 - **Selected text**: sends Ctrl+C to the active app and restores your clipboard afterwards; falls back to Windows UI Automation (and never sends Ctrl+C in terminals).
-- **Translation**: the free Google Translate endpoint used by the browser extension. No account or API key.
+- **Translation**: the free Google Translate endpoints used by the browser extensions. No account or API key. When Google limits one address, the next one is used.
 - **OCR**: the `Windows.Media.Ocr` engine built into Windows (offline). Add languages in *Settings → Time & language → Language & region*.
 - **Gestures**: reads the Precision Touchpad through the Raw Input API, recognizes swipes and pinches, then sends the mouse back/forward buttons to the window under the pointer. Pinch uses the Windows magnification API (the one behind Windows Magnifier) to magnify the screen, drawn on its own thread in step with the screen refresh and smoothed so touchpad noise does not shake the picture.
 - **Picture zoom**: finds the picture under the pointer with UI Automation. Picture files in File Explorer and on the desktop open from disk at full quality, pictures that link to a picture file are downloaded at full size, and anything else is enlarged from the screen.

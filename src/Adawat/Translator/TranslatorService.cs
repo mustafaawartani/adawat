@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Threading;
@@ -28,6 +29,7 @@ public sealed class TranslatorService : IDisposable
     private int _clickCount;
     private IntPtr _iconOwner;
     private DispatcherTimer? _selectionWatch;
+    private long _iconShownAt;
 
     public TranslatorService(AppSettings settings, Func<TranslatorWindow> window)
     {
@@ -119,6 +121,8 @@ public sealed class TranslatorService : IDisposable
 
             case MouseEventKind.OtherButtonDown:
             case MouseEventKind.Wheel:
+                // Lifting fingers off a touchpad right after selecting can send a tiny scroll; ignore that.
+                if (e.Kind == MouseEventKind.Wheel && e.TimestampMs - Interlocked.Read(ref _iconShownAt) < 600) break;
                 _dispatcher.BeginInvoke(() =>
                 {
                     if (_icon != null && _icon.IsShown && !_icon.Contains(e.X, e.Y)) _icon.HideIcon();
@@ -139,9 +143,22 @@ public sealed class TranslatorService : IDisposable
         int distance = Math.Abs(e.X - _downX) + Math.Abs(e.Y - _downY);
         bool dragged = distance >= 8 && e.TimestampMs - _downTime >= 100;
         bool doubleClick = _clickCount >= 2;
-        if (!dragged && !doubleClick) return;
-        if (T.OnlyOverText && !_downOnText) return;
-        if (!ModifierSatisfied()) return;
+        if (!dragged && !doubleClick)
+        {
+            if (distance >= 8) Explain("the drag was too quick to be a selection");
+            return;
+        }
+        // A selection often starts just beside the text (arrow pointer) and ends on it, or the other way round.
+        if (T.OnlyOverText && !_downOnText && !e.IsTextCursor)
+        {
+            Explain("the pointer was not over text when pressing or releasing (see \"Only when selecting text\")");
+            return;
+        }
+        if (!ModifierSatisfied())
+        {
+            Explain($"{T.SelectionModifier} was not held");
+            return;
+        }
 
         var point = new Native.POINT(e.X, e.Y);
         _dispatcher.BeginInvoke(DispatcherPriority.Background, async () =>
@@ -149,7 +166,11 @@ public sealed class TranslatorService : IDisposable
             if (!WantsMouseHook) return;
             var foreground = Native.GetForegroundWindow();
             if (WindowInfo.IsOwnWindow(foreground)) return;
-            if (WindowInfo.ListContains(T.DisabledApps, WindowInfo.ProcessName(foreground))) return;
+            if (WindowInfo.ListContains(T.DisabledApps, WindowInfo.ProcessName(foreground)))
+            {
+                Explain($"{WindowInfo.ProcessName(foreground)} is in the list of apps where the translator is off");
+                return;
+            }
 
             await Task.Delay(80); // let the app finish updating its selection
             if (T.OnSelection == SelectionBehavior.TranslateInstantly)
@@ -159,6 +180,7 @@ public sealed class TranslatorService : IDisposable
             else
             {
                 _iconOwner = foreground;
+                Interlocked.Exchange(ref _iconShownAt, Environment.TickCount64);
                 Icon.ShowAt(point, T.KeepIconWhileSelected ? null : T.IconSeconds);
                 if (T.KeepIconWhileSelected) WatchSelection();
             }
@@ -211,15 +233,48 @@ public sealed class TranslatorService : IDisposable
         _selectionWatch.Start();
     }
 
+    /// <summary>Keys that type or move the caret, which replace or clear a selection.</summary>
+    private static readonly int[] TypingKeys = BuildTypingKeys();
+
+    private static int[] BuildTypingKeys()
+    {
+        var keys = new System.Collections.Generic.List<int> { 0x08, 0x09, 0x0D, 0x2E }; // Backspace, Tab, Enter, Delete
+        for (int vk = 0x20; vk <= 0x28; vk++) keys.Add(vk);  // Space, Page Up/Down, End, Home, arrows
+        for (int vk = 0x30; vk <= 0x39; vk++) keys.Add(vk);  // 0-9
+        for (int vk = 0x41; vk <= 0x5A; vk++) keys.Add(vk);  // A-Z
+        for (int vk = 0x60; vk <= 0x6F; vk++) keys.Add(vk);  // number pad
+        for (int vk = 0xBA; vk <= 0xC0; vk++) keys.Add(vk);  // ; = , - . / `
+        for (int vk = 0xDB; vk <= 0xDF; vk++) keys.Add(vk);  // [ \ ] '
+        keys.Add(0xE2);                                      // < > on some keyboards
+        return keys.ToArray();
+    }
+
+    /// <summary>
+    /// Only real typing keys count: language-switch and input-method keys can read as held down
+    /// for a long time, which used to hide the button the moment it appeared.
+    /// </summary>
     private static bool TypingKeyDown()
     {
         if (InputSender.IsDown(InputSender.VK_CONTROL)) return false; // Ctrl+C, Ctrl+A… keep the selection
-        for (int vk = 0x08; vk <= 0xFE; vk++)
+        foreach (var vk in TypingKeys)
         {
-            bool modifier = vk is >= 0x10 and <= 0x12 or >= 0xA0 and <= 0xA5 or 0x5B or 0x5C or 0x14 or 0x90 or 0x91;
-            if (!modifier && (Native.GetAsyncKeyState(vk) & 0x8000) != 0) return true;
+            if ((Native.GetAsyncKeyState(vk) & 0x8000) != 0) return true;
         }
         return false;
+    }
+
+    private static string _lastExplanation = "";
+    private static long _lastExplanationMs;
+
+    /// <summary>Notes in the log why a mouse selection did not show the button (not repeated, at most every few seconds).</summary>
+    private static void Explain(string reason)
+    {
+        long now = Environment.TickCount64;
+        if (now - _lastExplanationMs < 2000 || (reason == _lastExplanation && now - _lastExplanationMs < 30000)) return;
+        _lastExplanation = reason;
+        _lastExplanationMs = now;
+        // Often called on the mouse hook thread, which must never wait on a file.
+        Task.Run(() => Log.Info("Translate button not shown: " + reason));
     }
 
     private bool ModifierSatisfied() => T.SelectionModifier switch

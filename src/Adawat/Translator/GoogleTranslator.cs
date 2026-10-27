@@ -71,43 +71,86 @@ public sealed class GoogleTranslator
         return new TranslationResult(text, sb.ToString().TrimEnd(), detected, target, null, null, Array.Empty<DictionaryEntry>());
     }
 
+    /// <summary>
+    /// Google's free addresses, best first. Each has its own request limit, so when one answers
+    /// "too many requests" the next one is tried and the limited one is skipped for a while.
+    /// The last one (the dictionary popup of Google's own Chrome extension) gives only the translation.
+    /// </summary>
+    private static readonly string[] Endpoints =
+    {
+        "https://translate.googleapis.com/translate_a/single?client=gtx",
+        "https://translate.google.com/translate_a/single?client=gtx",
+        "https://clients5.google.com/translate_a/t?client=dict-chrome-ex",
+    };
+
+    private static readonly DateTime[] LimitedUntil = new DateTime[Endpoints.Length];
+
+    /// <summary>Where notes go (the app's log); this file is also used by the tests, which have no log.</summary>
+    public static Action<string>? LogInfo { get; set; }
+
     private static async Task<TranslationResult> TranslateChunkAsync(string text, string source, string target, bool withExtras, CancellationToken token)
     {
-        var url = new StringBuilder("https://translate.googleapis.com/translate_a/single?client=gtx&dj=1&ie=UTF-8&oe=UTF-8&hl=en");
+        TranslationException? last = null;
+        bool triedAny = false;
+        for (int i = 0; i < Endpoints.Length; i++)
+        {
+            // Skip addresses that recently said "too many requests", unless all of them did.
+            if (LimitedUntil[i] > DateTime.UtcNow && (i < Endpoints.Length - 1 || triedAny)) continue;
+            triedAny = true;
+            var url = BuildUrl(Endpoints[i], text, source, target, withExtras);
+            try
+            {
+                using var response = await Http.GetAsync(url, token);
+                if (response.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable or HttpStatusCode.Forbidden)
+                {
+                    LimitedUntil[i] = DateTime.UtcNow.AddMinutes(2);
+                    LogInfo?.Invoke($"Google Translate address {i + 1} is limiting requests ({(int)response.StatusCode}); trying the next one");
+                    last = new TranslationException("Google is limiting requests right now. Please try again in a minute.");
+                    continue;
+                }
+                if (!response.IsSuccessStatusCode)
+                {
+                    last = new TranslationException($"Google Translate answered with an error ({(int)response.StatusCode}).");
+                    continue;
+                }
+                var json = await response.Content.ReadAsStringAsync(token);
+                return Endpoints[i].Contains("/translate_a/t?")
+                    ? GoogleResponseParser.ParseSimple(json, text, source, target)
+                    : GoogleResponseParser.Parse(json, text, target);
+            }
+            catch (TranslationException ex)
+            {
+                last = ex;
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (TaskCanceledException ex)
+            {
+                throw new TranslationException("Google Translate did not answer in time. Check your internet connection.", ex);
+            }
+            catch (HttpRequestException ex)
+            {
+                last = new TranslationException("Could not reach Google Translate. Check your internet connection.", ex);
+            }
+        }
+        throw last ?? new TranslationException("Google is limiting requests right now. Please try again in a minute.");
+    }
+
+    private static string BuildUrl(string endpoint, string text, string source, string target, bool withExtras)
+    {
+        var url = new StringBuilder(endpoint);
+        if (!endpoint.Contains("/translate_a/t?")) url.Append("&dj=1&ie=UTF-8&oe=UTF-8&hl=en");
         url.Append("&sl=").Append(Uri.EscapeDataString(source));
         url.Append("&tl=").Append(Uri.EscapeDataString(target));
-        url.Append("&dt=t");
-        if (withExtras) url.Append("&dt=bd&dt=rm");
+        if (!endpoint.Contains("/translate_a/t?"))
+        {
+            url.Append("&dt=t");
+            if (withExtras) url.Append("&dt=bd&dt=rm");
+        }
         url.Append("&q=").Append(Uri.EscapeDataString(text));
-
-        string json;
-        try
-        {
-            using var response = await Http.GetAsync(url.ToString(), token);
-            if (response.StatusCode == HttpStatusCode.TooManyRequests || response.StatusCode == HttpStatusCode.ServiceUnavailable)
-                throw new TranslationException("Google is limiting requests right now. Please try again in a minute.");
-            if (!response.IsSuccessStatusCode)
-                throw new TranslationException($"Google Translate answered with an error ({(int)response.StatusCode}).");
-            json = await response.Content.ReadAsStringAsync(token);
-        }
-        catch (TranslationException)
-        {
-            throw;
-        }
-        catch (OperationCanceledException) when (token.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (TaskCanceledException ex)
-        {
-            throw new TranslationException("Google Translate did not answer in time. Check your internet connection.", ex);
-        }
-        catch (HttpRequestException ex)
-        {
-            throw new TranslationException("Could not reach Google Translate. Check your internet connection.", ex);
-        }
-
-        return GoogleResponseParser.Parse(json, text, target);
+        return url.ToString();
     }
 }
 
@@ -152,6 +195,42 @@ public static class GoogleResponseParser
             return new TranslationResult(sourceText, translation.ToString(), src, target, translit, sourceTranslit, dictionary);
         }
         catch (JsonException ex)
+        {
+            throw new TranslationException("Google Translate sent an answer Adawat could not read.", ex);
+        }
+    }
+
+    /// <summary>
+    /// Reads the short answer of translate_a/t: ["text"] for a chosen source language, or
+    /// [["text","en"]] (with the detected language) when the language is detected.
+    /// </summary>
+    public static TranslationResult ParseSimple(string json, string sourceText, string source, string target)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Array || root.GetArrayLength() == 0)
+                throw new TranslationException("Google Translate sent an empty answer.");
+            var first = root[0];
+            string translation;
+            string detected = source == "auto" ? "" : source;
+            if (first.ValueKind == JsonValueKind.Array)
+            {
+                translation = first.GetArrayLength() > 0 ? first[0].GetString() ?? "" : "";
+                if (first.GetArrayLength() > 1 && first[1].ValueKind == JsonValueKind.String) detected = first[1].GetString() ?? detected;
+            }
+            else
+            {
+                translation = first.GetString() ?? "";
+            }
+            return new TranslationResult(sourceText, translation, detected, target, null, null, Array.Empty<DictionaryEntry>());
+        }
+        catch (JsonException ex)
+        {
+            throw new TranslationException("Google Translate sent an answer Adawat could not read.", ex);
+        }
+        catch (InvalidOperationException ex)
         {
             throw new TranslationException("Google Translate sent an answer Adawat could not read.", ex);
         }

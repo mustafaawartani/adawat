@@ -7,6 +7,7 @@ namespace Adawat.Core;
 
 public enum MouseEventKind { LeftDown, LeftUp, OtherButtonDown, Wheel }
 
+/// <summary>A mouse event; <see cref="IsTextCursor"/> is only filled in for left button presses and releases.</summary>
 public readonly record struct MouseHookEvent(MouseEventKind Kind, int X, int Y, long TimestampMs, bool IsTextCursor);
 
 /// <summary>
@@ -89,7 +90,7 @@ public sealed class MouseHook : IDisposable
                     };
                     if (kind != null && MouseEvent != null)
                     {
-                        bool text = kind == MouseEventKind.LeftDown && WindowInfo.IsLikelyTextCursor();
+                        bool text = kind is MouseEventKind.LeftDown or MouseEventKind.LeftUp && WindowInfo.IsLikelyTextCursor();
                         MouseEvent(new MouseHookEvent(kind.Value, data.pt.X, data.pt.Y, Environment.TickCount64, text));
                     }
                     if (kind == MouseEventKind.Wheel && BlockWheel?.Invoke() == true)

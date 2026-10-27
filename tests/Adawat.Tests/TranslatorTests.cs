@@ -100,4 +100,21 @@ public class TranslatorTests
         Assert.Equal("Hebrew", Languages.NameOf("he"));
         Assert.True(Languages.Same("he", "iw"));
     }
+
+    [Fact]
+    public void ReadsTheShortAnswerWithDetectedLanguage()
+    {
+        var result = GoogleResponseParser.ParseSimple("[[\"مرحبا\",\"en\"]]", "hello", "auto", "ar");
+        Assert.Equal("مرحبا", result.Translation);
+        Assert.Equal("en", result.SourceLanguage);
+    }
+
+    [Fact]
+    public void ReadsTheShortAnswerWithChosenLanguage()
+    {
+        var result = GoogleResponseParser.ParseSimple("[\"hola\"]", "hello", "en", "es");
+        Assert.Equal("hola", result.Translation);
+        Assert.Equal("en", result.SourceLanguage);
+        Assert.Throws<TranslationException>(() => GoogleResponseParser.ParseSimple("{}", "x", "en", "es"));
+    }
 }

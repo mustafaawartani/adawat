@@ -79,8 +79,10 @@ public sealed class TrayIcon : IDisposable
         _ocrItem.ShortcutKeyDisplayString = _settings.Ocr.Hotkey;
 
         bool dark = ThemeHelper.IsDark;
-        menu.Renderer = new ToolStripProfessionalRenderer(new MenuColors(dark)) { RoundedEdges = true };
-        menu.BackColor = dark ? Color.FromArgb(0x2B, 0x2B, 0x2B) : Color.FromArgb(0xF9, 0xF9, 0xF9);
+        var a = ThemeHelper.AccentColor;
+        var colors = new MenuColors(dark, Color.FromArgb(a.R, a.G, a.B));
+        menu.Renderer = new ToolStripProfessionalRenderer(colors) { RoundedEdges = true };
+        menu.BackColor = colors.Back;
         menu.ForeColor = dark ? Color.White : Color.FromArgb(0x1A, 0x1A, 0x1A);
         foreach (ToolStripItem item in menu.Items) item.ForeColor = menu.ForeColor;
     }
@@ -98,20 +100,34 @@ public sealed class TrayIcon : IDisposable
         _icon.Dispose();
     }
 
+    /// <summary>Menu colors in the app's palette: neutrals with a touch of the accent color.</summary>
     private sealed class MenuColors : ProfessionalColorTable
     {
         private readonly bool _dark;
-        public MenuColors(bool dark) => _dark = dark;
-        private Color Back => _dark ? Color.FromArgb(0x2B, 0x2B, 0x2B) : Color.FromArgb(0xF9, 0xF9, 0xF9);
-        private Color Hover => _dark ? Color.FromArgb(0x3D, 0x3D, 0x3D) : Color.FromArgb(0xE9, 0xE9, 0xE9);
+        private readonly Color _accent;
+
+        public MenuColors(bool dark, Color accent)
+        {
+            _dark = dark;
+            _accent = accent;
+        }
+
+        private Color Mix(Color under, double amount) => Color.FromArgb(
+            (int)(under.R + (_accent.R - under.R) * amount),
+            (int)(under.G + (_accent.G - under.G) * amount),
+            (int)(under.B + (_accent.B - under.B) * amount));
+
+        public Color Back => Mix(_dark ? Color.FromArgb(0x2B, 0x2B, 0x2B) : Color.FromArgb(0xFA, 0xFA, 0xFB), _dark ? 0.08 : 0.04);
+        private Color Hover => Mix(_dark ? Color.FromArgb(0x3D, 0x3D, 0x3D) : Color.FromArgb(0xEE, 0xEF, 0xF2), _dark ? 0.22 : 0.16);
+        private Color Line => Mix(_dark ? Color.FromArgb(0x45, 0x45, 0x45) : Color.FromArgb(0xDD, 0xDF, 0xE4), 0.15);
         public override Color ToolStripDropDownBackground => Back;
         public override Color ImageMarginGradientBegin => Back;
         public override Color ImageMarginGradientMiddle => Back;
         public override Color ImageMarginGradientEnd => Back;
-        public override Color MenuBorder => _dark ? Color.FromArgb(0x45, 0x45, 0x45) : Color.FromArgb(0xD5, 0xD5, 0xD5);
+        public override Color MenuBorder => Line;
         public override Color MenuItemBorder => Hover;
         public override Color MenuItemSelected => Hover;
-        public override Color SeparatorDark => _dark ? Color.FromArgb(0x45, 0x45, 0x45) : Color.FromArgb(0xE0, 0xE0, 0xE0);
+        public override Color SeparatorDark => Line;
         public override Color SeparatorLight => Back;
         public override Color CheckBackground => Hover;
         public override Color CheckSelectedBackground => Hover;

@@ -39,7 +39,7 @@ public sealed class SettingsWindow : FluentWindow
         MinWidth = 760;
         MinHeight = 520;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
-        WindowBackdropType = WindowBackdropType.Mica;
+        WindowBackdropType = ThemeHelper.GlassSupported ? WindowBackdropType.Acrylic : WindowBackdropType.Mica;
         WindowCornerPreference = WindowCornerPreference.Round;
         ExtendsContentIntoTitleBar = true;
         FontFamily = new FontFamily(Ui.FontFamilyName);
@@ -86,6 +86,8 @@ public sealed class SettingsWindow : FluentWindow
         body.Children.Add(_scroller);
 
         var root = new Grid();
+        // The accent color over the frosted glass, so the chosen color shows on the whole window.
+        root.SetResourceReference(Panel.BackgroundProperty, "Adawat.WindowTint");
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         Grid.SetRow(titleBar, 0);
@@ -93,6 +95,13 @@ public sealed class SettingsWindow : FluentWindow
         root.Children.Add(titleBar);
         root.Children.Add(body);
         Content = root;
+
+        void Reglaze()
+        {
+            if (ThemeHelper.GlassSupported) WindowBackdrop.ApplyBackdrop(this, WindowBackdropType.Acrylic);
+        }
+        ThemeHelper.Changed += Reglaze;
+        Closed += (_, _) => ThemeHelper.Changed -= Reglaze;
 
         int index = Math.Max(0, _pages.FindIndex(p => string.Equals(p.Title, startPage, StringComparison.OrdinalIgnoreCase)));
         _nav.SelectedIndex = index;

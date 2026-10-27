@@ -76,8 +76,8 @@ public sealed class TranslatorWindow : FluentWindow
 
         Title = "Adawat Translator";
         Icon = AppIcon.ImageSource;
-        // A plain, solid surface: calmer and easier to read than the see-through acrylic.
-        WindowBackdropType = WindowBackdropType.None;
+        // Frosted glass where Windows supports it, with the palette's see-through colors on top.
+        WindowBackdropType = ThemeHelper.GlassSupported ? WindowBackdropType.Acrylic : WindowBackdropType.None;
         WindowCornerPreference = WindowCornerPreference.Round;
         ExtendsContentIntoTitleBar = true;
         ResizeMode = ResizeMode.NoResize;
@@ -91,7 +91,8 @@ public sealed class TranslatorWindow : FluentWindow
         MaxHeight = 760;
         FontFamily = new FontFamily(Ui.FontFamilyName);
         ApplyTheme();
-        SetResourceReference(BackgroundProperty, "Adawat.Surface");
+        if (ThemeHelper.GlassSupported) Background = Brushes.Transparent;
+        else SetResourceReference(BackgroundProperty, "Adawat.Surface");
 
         // ---- Header: languages in a capsule, window buttons on the right ----------------
         var swap = PopupUi.IconButton(SymbolRegular.ArrowSwap20, "Swap languages", Swap, 15);
@@ -169,7 +170,7 @@ public sealed class TranslatorWindow : FluentWindow
         sourceTools.Children.Add(translateButton);
         sourceTools.Children.Add(sourceLeft);
 
-        var top = new StackPanel { Margin = new Thickness(14, 12, 14, 12) };
+        var top = new StackPanel();
         top.Children.Add(header);
         top.Children.Add(_modeLabel);
         top.Children.Add(sourceField);
@@ -225,8 +226,10 @@ public sealed class TranslatorWindow : FluentWindow
         _bottom.SetResourceReference(Border.BackgroundProperty, "Adawat.Tint");
         _bottom.SetResourceReference(Border.BorderBrushProperty, "Adawat.TintBorder");
 
+        var topLayer = new Border { Padding = new Thickness(14, 12, 14, 12), Child = top };
+        topLayer.SetResourceReference(Border.BackgroundProperty, "Adawat.Glass");
         var root = new StackPanel();
-        root.Children.Add(top);
+        root.Children.Add(topLayer);
         root.Children.Add(_bottom);
         // The scroller measures the content at its natural height; the window then takes that height.
         var scroller = new ScrollViewer
@@ -283,6 +286,8 @@ public sealed class TranslatorWindow : FluentWindow
         {
             ApplyTheme();
             ApplyBorderColor();
+            // The glass follows light/dark only when applied again.
+            if (ThemeHelper.GlassSupported && _hwnd != IntPtr.Zero) WindowBackdrop.ApplyBackdrop(this, WindowBackdropType.Acrylic);
             if (_statusIsError) SetStatus(_status.Text, error: true);
         };
     }

@@ -80,6 +80,7 @@ public sealed class App : Application, IAppHost
         Hotkeys = new HotkeyManager(_messages);
         History = new HistoryStore(Settings.Translator);
         _google = new GoogleTranslator();
+        GoogleTranslator.LogInfo = Log.Info;
         _speech = new SpeechPlayer();
         _translator = new TranslatorService(Settings, () => Popup);
         _ocr = new OcrTool(Settings, _translator);

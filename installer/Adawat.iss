@@ -7,6 +7,8 @@
 #endif
 
 [Setup]
+; Tells Explorer to reload icons when setup finishes.
+ChangesAssociations=yes
 AppId={{4B64AF9E-7E4B-4587-A719-C9AF07173802}
 AppName=Adawat
 AppVersion={#AppVersion}
@@ -57,6 +59,8 @@ Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.webp\shell\Adawat.
 Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.webp\shell\Adawat.ExtractTranslate"; Flags: dontcreatekey uninsdeletekey
 
 [Run]
+; Windows keeps old pictures of pinned and Start menu icons in its icon cache; refresh it so the new icon shows.
+Filename: "{sys}\ie4uinit.exe"; Parameters: "-show"; Flags: runhidden waituntilterminated skipifdoesntexist
 Filename: "{app}\Adawat.exe"; Description: "Start Adawat now"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]

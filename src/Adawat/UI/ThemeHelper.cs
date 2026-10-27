@@ -89,7 +89,8 @@ public static class ThemeHelper
     /// <summary>
     /// Puts the palette into <paramref name="resources"/> as brushes: Adawat.Surface (window),
     /// Adawat.Subtle (cards), Adawat.Hover, Adawat.Border, Adawat.Text, Adawat.Muted, Adawat.Faint,
-    /// Adawat.Accent, Adawat.AccentSoft (tinted backgrounds) and Adawat.OnAccent (text on the accent).
+    /// Adawat.Accent, Adawat.AccentSoft (tinted backgrounds), Adawat.OnAccent (text on the accent),
+    /// Adawat.Tint and Adawat.TintBorder (the translation area).
     /// </summary>
     public static void ApplyPalette(ResourceDictionary resources)
     {
@@ -111,6 +112,10 @@ public static class ThemeHelper
         Set("Accent", accent);
         Set("AccentSoft", Color.FromArgb(dark ? (byte)0x33 : (byte)0x1C, accent.R, accent.G, accent.B));
         Set("OnAccent", dark ? Color.FromRgb(0x0B, 0x10, 0x18) : Colors.White);
+        // The translation area: the surface with a breath of the accent color.
+        var surface = dark ? Color.FromRgb(0x1F, 0x20, 0x24) : Colors.White;
+        Set("Tint", Blend(surface, accent, dark ? 0.09 : 0.05));
+        Set("TintBorder", Blend(surface, accent, dark ? 0.18 : 0.11));
     }
 
     /// <summary>The palette color for a key (see <see cref="ApplyPalette"/>), for code that needs a raw color.</summary>
@@ -146,6 +151,11 @@ public static class ThemeHelper
             return false;
         }
     }
+
+    private static Color Blend(Color under, Color over, double amount) => Color.FromRgb(
+        (byte)(under.R + (over.R - under.R) * amount),
+        (byte)(under.G + (over.G - under.G) * amount),
+        (byte)(under.B + (over.B - under.B) * amount));
 
     private static Color Lighten(Color c, double amount) => Color.FromRgb(
         (byte)(c.R + (255 - c.R) * amount),

@@ -70,8 +70,8 @@ public static class PopupUi
         label.TextWrapping = TextWrapping.NoWrap;
         var button = new Border
         {
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(14, 6, 14, 7),
+            CornerRadius = new CornerRadius(16),
+            Padding = new Thickness(16, 6, 16, 7),
             Child = label,
             Cursor = Cursors.Hand,
             VerticalAlignment = VerticalAlignment.Center,
@@ -111,7 +111,7 @@ public static class PopupUi
     /// <summary>
     /// Click on release (like a real button), a hover background, and a slight press effect.
     /// </summary>
-    public static void MakeClickable(Border element, Action onClick, string? hoverBrush)
+    public static void MakeClickable(Border element, Action onClick, string? hoverBrush, Func<string?>? restBrush = null)
     {
         bool pressed = false;
         element.MouseEnter += (_, _) =>
@@ -122,7 +122,9 @@ public static class PopupUi
         {
             pressed = false;
             element.RenderTransform = null;
-            if (hoverBrush != null && !IsActive(element)) element.Background = Brushes.Transparent;
+            if (hoverBrush == null || IsActive(element)) return;
+            if (restBrush?.Invoke() is { } rest) element.SetResourceReference(Border.BackgroundProperty, "Adawat." + rest);
+            else element.Background = Brushes.Transparent;
         };
         element.MouseLeftButtonDown += (_, e) =>
         {

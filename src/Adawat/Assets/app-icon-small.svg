@@ -1,0 +1,18 @@
+<!-- The 16-24 px sizes of adawat.ico (tray, small taskbar): the same glass tile, simplified and
+     drawn on a 16 px grid so it stays crisp. Larger sizes come from app-icon.svg. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="44" height="44">
+  <defs>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#E3E8F0"/>
+    </linearGradient>
+    <linearGradient id="front" x1="0" y1="0" x2="0.8" y2="1">
+      <stop offset="0" stop-color="#5A8DFF"/>
+      <stop offset="1" stop-color="#4A4BF0"/>
+    </linearGradient>
+  </defs>
+  <rect x="0.5" y="0.5" width="15" height="15" rx="4" fill="url(#plate)" stroke="#334155" stroke-opacity="0.28" stroke-width="1"/>
+  <rect x="7" y="5" width="7" height="8" rx="1.5" fill="#C3CCDA"/>
+  <path d="M4.2 2.5h4.8a1.7 1.7 0 0 1 1.7 1.7v4.1a1.7 1.7 0 0 1-1.7 1.7h-3l-2 1.8v-1.9a1.7 1.7 0 0 1-1.5-1.6v-4.1a1.7 1.7 0 0 1 1.7-1.7z" fill="url(#front)"/>
+  <text x="6.65" y="8.6" font-family="Inter, Segoe UI, sans-serif" font-weight="800" font-size="6.2" fill="#FFFFFF" text-anchor="middle">A</text>
+</svg>

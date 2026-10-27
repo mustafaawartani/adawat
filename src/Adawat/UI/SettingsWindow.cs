@@ -372,8 +372,9 @@ public sealed class SettingsWindow : FluentWindow
             p.Children.Add(Ui.Card(SymbolRegular.ZoomIn24, "Maximum zoom", null,
                 SliderRow(2, 10, g.MaxScreenZoom, v => $"{v:0}x", v => { g.MaxScreenZoom = Math.Round(v); Changed(); })));
             p.Children.Add(Ui.Card(SymbolRegular.Eye24, "Picture",
-                "Sharp keeps text and edges crisp. Smooth softens the enlarged pixels, which looks gentler on photos but a little blurry.",
-                EnumCombo(g.SmoothZoomEdges, new Dictionary<bool, string> { [false] = "Sharp", [true] = "Smooth" },
+                "Smooth edges (recommended) blends the enlarged pixels, like Windows Magnifier, and stays steady while zooming. " +
+                "Blocky shows every screen pixel as a square, which flickers while the zoom changes.",
+                EnumCombo(g.SmoothZoomEdges, new Dictionary<bool, string> { [true] = "Smooth edges", [false] = "Blocky pixels" },
                     v => { g.SmoothZoomEdges = v; Changed(); })));
             p.Children.Add(Ui.Card(SymbolRegular.ZoomFit24, "Settle on whole zoom levels",
                 "When you lift your fingers close to 2x, 3x…, the zoom settles exactly there, where the picture is sharpest.",
@@ -559,13 +560,18 @@ public sealed class SettingsWindow : FluentWindow
                 ToolTip = name,
                 Background = Brushes.Transparent,
             };
-            ring.MouseLeftButtonUp += (_, _) =>
+            // The settings row is itself a button that captures the mouse on press, so a
+            // MouseUp here would never arrive: react to the press, before the row sees it.
+            ring.PreviewMouseLeftButtonDown += (_, e) =>
             {
+                e.Handled = true;
                 S.Accent = choice;
                 ThemeHelper.Set(S.Theme, S.Accent);
                 Refresh();
                 Changed();
             };
+            ring.MouseEnter += (_, _) => dot.Opacity = 0.8;
+            ring.MouseLeave += (_, _) => dot.Opacity = 1;
             rings.Add((choice, ring));
             row.Children.Add(ring);
         }

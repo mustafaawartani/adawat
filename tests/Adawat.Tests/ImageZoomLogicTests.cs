@@ -28,6 +28,14 @@ public class ImageZoomLogicTests
     }
 
     [Fact]
+    public void IgnoresInvisibleDirectionMarksInExplorerNames()
+    {
+        var files = new[] { "صورة.png", "Holiday.jpg" };
+        Assert.Equal("Holiday.jpg", ImageZoomLogic.MatchImageFile("\u200EHoliday\u200E", files));
+        Assert.Equal("صورة.png", ImageZoomLogic.MatchImageFile("\u200Fصورة\u200F", files));
+    }
+
+    [Fact]
     public void SaveNamesComeFromTheSourceAndNeverOverwrite()
     {
         var now = new DateTime(2026, 10, 27, 9, 30, 5);

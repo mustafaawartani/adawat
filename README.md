@@ -41,8 +41,8 @@ All shortcuts and behaviors can be changed in the settings (click the tray icon 
 - History of translations with search.
 - Text from screen: language (uses the OCR languages installed in Windows), translate/copy right after, keep line breaks, Explorer menu.
 - Gestures: fingers (2/3/4), sensitivity, direction, how to go back (mouse back button, Alt+arrows, browser keys), arrow animation, per-app lists, pause in full-screen games.
-- Pinch: screen zoom like Chrome (zoom speed, maximum zoom, sharp or smooth picture, settling on whole zoom levels) or app zoom (Ctrl+wheel, Ctrl+Plus/Minus). While your fingers are on the touchpad over an app where the screen zoom works, Windows' own pinch (icon and text size) is paused for that moment; your Windows setting is never changed, and apps in the "pinching does nothing" list keep their own pinch.
-- Picture zoom: save/copy shortcuts (only taken while a preview is open), delay, only while holding a key, minimum size, per-app list.
+- Pinch: screen zoom like Chrome (zoom speed, maximum zoom, smooth edges or blocky pixels, optional settling on whole zoom levels) or app zoom (Ctrl+wheel, Ctrl+Plus/Minus). While your fingers are on the touchpad over an app where the screen zoom works, Windows' own pinch (icon and text size) is paused for that moment; your Windows setting is never changed, and apps in the "pinching does nothing" list keep their own pinch.
+- Picture zoom: save/copy shortcuts (only taken while a preview is open, with a notification at the bottom of the screen when done), delay, only while holding a key, minimum size, per-app list. The log notes why a picture did not open.
 - Run as administrator (so the tools also work in admin windows), theme (light/dark/system) and accent color, start with Windows.
 
 ## How it works

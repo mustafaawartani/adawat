@@ -68,32 +68,64 @@ public sealed class ImageFinder : IDisposable
         var process = WindowInfo.ProcessName(root);
         bool explorer = string.Equals(process, "explorer.exe", StringComparison.OrdinalIgnoreCase);
 
-        var element = AutomationElement.FromPoint(new System.Windows.Point(point.X, point.Y));
+        var start = AutomationElement.FromPoint(new System.Windows.Point(point.X, point.Y));
         var walker = TreeWalker.ControlViewWalker;
-        for (int depth = 0; element != null && depth < 5; depth++, element = SafeParent(walker, element))
+
+        // File Explorer and the desktop: the file under the pointer (its thumbnail is often a
+        // separate picture element on top of the item, so look for the item first).
+        if (explorer)
         {
-            var info = element.Current;
+            var element = start;
+            for (int depth = 0; element != null && depth < 6; depth++, element = SafeParent(walker, element))
+            {
+                var info = element.Current;
+                if (info.ControlType != ControlType.ListItem && info.ControlType != ControlType.DataItem) continue;
+                var bounds = ToPixels(info.BoundingRectangle);
+                var path = ExplorerFile(root, info.Name);
+                Trace($"File Explorer item \"{info.Name}\" -> {path ?? "not a picture file (or folder not found)"}");
+                return path == null || bounds == null ? null : new ImageHit(bounds.Value, path, null, Path.GetFileName(path));
+            }
+        }
+
+        var chain = new List<string>();
+        for (int depth = 0; start != null && depth < 5; depth++, start = SafeParent(walker, start))
+        {
+            var info = start.Current;
             var type = info.ControlType;
+            chain.Add(type.ProgrammaticName.Replace("ControlType.", ""));
             var bounds = ToPixels(info.BoundingRectangle);
             if (bounds == null) continue;
 
-            if (explorer && (type == ControlType.ListItem || type == ControlType.DataItem))
-            {
-                var path = ExplorerFile(root, info.Name);
-                return path == null ? null : new ImageHit(bounds.Value, path, null, Path.GetFileName(path));
-            }
-
             if (type == ControlType.Image)
             {
-                if (bounds.Value.Width < minSize || bounds.Value.Height < minSize) return null;
-                var url = ImageUrl(element, walker);
+                if (bounds.Value.Width < minSize || bounds.Value.Height < minSize)
+                {
+                    Trace($"Picture in {process} is smaller than {minSize} px ({bounds.Value.Width}×{bounds.Value.Height})");
+                    return null;
+                }
+                var url = ImageUrl(start, walker);
                 return new ImageHit(bounds.Value, null, url, info.Name);
             }
 
             // Stop at things that are clearly not part of a picture.
-            if (type == ControlType.Window || type == ControlType.Document || type == ControlType.Pane && depth > 0) return null;
+            if (type == ControlType.Window || type == ControlType.Document || type == ControlType.Pane && depth > 0) break;
         }
+        Trace($"No picture in {process} under the pointer ({string.Join(" < ", chain)})");
         return null;
+    }
+
+    private static string _lastTrace = "";
+    private static long _lastTraceMs;
+
+    /// <summary>Notes in the log why a picture did or did not open (not repeated, at most every few seconds).</summary>
+    private static void Trace(string message)
+    {
+        long now = Environment.TickCount64;
+        if (message == _lastTrace && now - _lastTraceMs < 30000) return;
+        if (now - _lastTraceMs < 1500) return;
+        _lastTrace = message;
+        _lastTraceMs = now;
+        Log.Info("Picture zoom: " + message);
     }
 
     private static AutomationElement? SafeParent(TreeWalker walker, AutomationElement element)
@@ -141,13 +173,15 @@ public sealed class ImageFinder : IDisposable
 
     private static string? ExplorerFile(IntPtr root, string displayName)
     {
+        var name = ImageZoomLogic.CleanDisplayName(displayName);
+        if (name.Length == 0) return null;
         foreach (var folder in ExplorerFolders(root))
         {
             try
             {
                 if (!Directory.Exists(folder)) continue;
-                var match = ImageZoomLogic.MatchImageFile(displayName,
-                    Directory.EnumerateFiles(folder, displayName + "*").Select(Path.GetFileName).OfType<string>());
+                var match = ImageZoomLogic.MatchImageFile(name,
+                    Directory.EnumerateFiles(folder, name + "*").Select(Path.GetFileName).OfType<string>());
                 if (match != null) return Path.Combine(folder, match);
             }
             catch (Exception ex)
@@ -170,7 +204,11 @@ public sealed class ImageFinder : IDisposable
             yield return Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory);
             yield break;
         }
-        if (cls != "CabinetWClass") yield break;
+        if (cls != "CabinetWClass")
+        {
+            Trace($"Explorer window of kind \"{cls}\" is not a folder window");
+            yield break;
+        }
 
         var folders = new List<string>();
         try
@@ -203,7 +241,16 @@ public sealed class ImageFinder : IDisposable
         {
             Log.Info($"Picture zoom could not ask File Explorer for its folder: {ex.Message}");
         }
+        if (folders.Count == 0) Trace("File Explorer did not say which folder it shows");
         foreach (var folder in folders) yield return folder;
+    }
+
+    /// <summary>The desktop (its icons belong to these windows).</summary>
+    public static bool IsDesktop(IntPtr root)
+    {
+        var name = new StringBuilder(64);
+        GetClassName(root, name, name.Capacity);
+        return name.ToString() is "Progman" or "WorkerW";
     }
 
     public void Dispose() => _work.CompleteAdding();

@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using System.Windows.Threading;
 using Adawat.Core;
 using Adawat.Interop;
+using Adawat.UI;
 
 namespace Adawat.ImageZoom;
 
@@ -76,7 +77,7 @@ public sealed class ImageZoomService : IDisposable
         var root = WindowInfo.RootWindowAt(p);
         if (root == IntPtr.Zero || WindowInfo.IsOwnWindow(root)) return;
         if (WindowInfo.ListContains(S.DisabledApps, WindowInfo.ProcessName(root))) return;
-        if (S.DisableInFullscreen && WindowInfo.IsFullscreenAppRunning()) return;
+        if (S.DisableInFullscreen && !ImageFinder.IsDesktop(root) && WindowInfo.IsFullscreenAppRunning()) return;
 
         _lastLookup = p;
         _ = LookAsync(p);
@@ -100,13 +101,19 @@ public sealed class ImageZoomService : IDisposable
         var cursor = WindowInfo.CursorPosition();
         if (hit == null || _hit != null || !hit.Bounds.Contains(cursor.X, cursor.Y)) return;
         if (hit.FilePath == null && hit.Url == null && !S.EnlargeScreenPictures) return;
+        Log.Info($"Picture zoom: opening {hit.FilePath ?? hit.Url ?? "a picture from the screen"} ({hit.Bounds.Width}×{hit.Bounds.Height} on screen)");
 
         _hit = hit;
         int generation = ++_generation;
         _loading?.Cancel();
         var cts = _loading = new CancellationTokenSource();
         var image = await ImageLoader.LoadAsync(hit, cts.Token);
-        if (generation != _generation || image == null) return;
+        if (generation != _generation) return;
+        if (image == null)
+        {
+            Log.Info("Picture zoom: the picture could not be loaded");
+            return;
+        }
         Show(hit, image);
     }
 
@@ -131,7 +138,18 @@ public sealed class ImageZoomService : IDisposable
         _window.ShowImage(image, layout, dpi, Hint());
         _hotkeys.Set(SaveHotkeyName, S.SaveHotkey, () => _window.Dispatcher.BeginInvoke(Save));
         _hotkeys.Set(CopyHotkeyName, S.CopyHotkey, () => _window.Dispatcher.BeginInvoke(Copy));
+        var taken = new System.Collections.Generic.List<string>();
+        if (_hotkeys.Conflicts.Contains(SaveHotkeyName)) taken.Add(S.SaveHotkey);
+        if (_hotkeys.Conflicts.Contains(CopyHotkeyName)) taken.Add(S.CopyHotkey);
+        if (taken.Count > 0 && !_warnedConflict)
+        {
+            _warnedConflict = true;
+            Log.Info($"Picture zoom: shortcut {string.Join(", ", taken)} is used by another app");
+            Toast.Show($"{string.Join(" and ", taken)} is used by another app", "Pick another shortcut in Adawat Settings → Picture zoom.", success: false, seconds: 5);
+        }
     }
+
+    private bool _warnedConflict;
 
     private string Hint()
     {
@@ -164,12 +182,16 @@ public sealed class ImageZoomService : IDisposable
         try
         {
             var path = ImageLoader.Save(_image);
-            _window.ShowMessage($"Saved to Downloads as {Path.GetFileName(path)}");
+            Log.Info($"Picture zoom: saved {path}");
+            _window.ShowMessage("Saved to Downloads");
+            Toast.Show("Saved to Downloads", Path.GetFileName(path) + "  ·  click to show it",
+                onClick: () => OpenFolderAndSelect(path));
         }
         catch (Exception ex)
         {
             Log.Error("Could not save the picture", ex);
             _window.ShowMessage("Could not save the picture", error: true);
+            Toast.Show("Could not save the picture", ex.Message, success: false);
         }
     }
 
@@ -180,12 +202,27 @@ public sealed class ImageZoomService : IDisposable
         try
         {
             ImageLoader.Copy(_image);
+            Log.Info("Picture zoom: copied the picture");
             _window.ShowMessage("Copied");
+            Toast.Show("Picture copied", $"{_image.PixelWidth} × {_image.PixelHeight}  ·  paste it anywhere with Ctrl+V");
         }
         catch (Exception ex)
         {
             Log.Error("Could not copy the picture", ex);
             _window.ShowMessage("Could not copy the picture", error: true);
+            Toast.Show("Could not copy the picture", ex.Message, success: false);
+        }
+    }
+
+    private static void OpenFolderAndSelect(string path)
+    {
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Could not open the Downloads folder", ex);
         }
     }
 

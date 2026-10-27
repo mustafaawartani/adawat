@@ -45,13 +45,13 @@ public sealed class LanguagePicker : Grid
         content.Children.Add(chevron);
         _button = new Border
         {
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(10, 6, 8, 7),
+            CornerRadius = new CornerRadius(15),
+            Padding = new Thickness(12, 5, 10, 6),
             Background = Brushes.Transparent,
             Child = content,
             Cursor = Cursors.Hand,
         };
-        PopupUi.MakeClickable(_button, Open, hoverBrush: "Hover");
+        PopupUi.MakeClickable(_button, Open, hoverBrush: "Hover", restBrush: () => _emphasized ? "Surface" : null);
         Children.Add(_button);
 
         // ---- The drop-down ---------------------------------------------------------------
@@ -144,6 +144,28 @@ public sealed class LanguagePicker : Grid
         {
             if (ItemFrom(e.OriginalSource as DependencyObject) is { } item) Pick(item);
         };
+    }
+
+    private bool _emphasized;
+
+    /// <summary>Shown as the raised, white chip in the language capsule (the language translated to).</summary>
+    public bool Emphasized
+    {
+        get => _emphasized;
+        set
+        {
+            _emphasized = value;
+            if (value)
+            {
+                _button.SetResourceReference(Border.BackgroundProperty, "Adawat.Surface");
+                _button.Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 4, ShadowDepth = 1, Direction = 270, Opacity = 0.14 };
+            }
+            else
+            {
+                _button.Background = Brushes.Transparent;
+                _button.Effect = null;
+            }
+        }
     }
 
     public bool IsOpen => _popup.IsOpen;

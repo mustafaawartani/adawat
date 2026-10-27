@@ -73,7 +73,7 @@ public sealed class ScreenMagnifier : IDisposable
     public bool InvertPan { get; set; }
 
     /// <summary>Round the zoom to 2x, 3x… when the fingers lift close to one, for the sharpest picture.</summary>
-    public bool SnapToWholeLevels { get; set; } = true;
+    public bool SnapToWholeLevels { get; set; }
 
     /// <summary>True: soften the enlarged pixels (smoother edges, a little blurry). False: crisp pixels.</summary>
     public bool SmoothEdges
@@ -250,11 +250,12 @@ public sealed class ScreenMagnifier : IDisposable
             {
                 smooth = _smoothingWanted;
                 if (_gliding) Glide(dt);
-                else if (!_panning && !_view.Pinching && _view.IsSettled && _view.IsZoomed) FollowPointer();
+                else if (!_panning && !_view.Pinching && _view.IsZoomed && Math.Abs(_view.Level - _view.TargetLevel) < 0.0005) FollowPointer();
                 _view.Step(dt);
                 level = (float)_view.Level;
-                x = (int)Math.Round(_view.X);
-                y = (int)Math.Round(_view.Y);
+                bool settled = _view.IsSettled;
+                x = Hold(_view.X, appliedX, settled);
+                y = Hold(_view.Y, appliedY, settled);
                 zoomed = _view.IsZoomed;
                 if (_holdCursor && (_panning || _gliding))
                 {
@@ -294,6 +295,15 @@ public sealed class ScreenMagnifier : IDisposable
         {
         }
     }
+
+    /// <summary>
+    /// The magnifier only takes whole-pixel offsets, and one pixel of offset moves the picture by
+    /// the zoom level on screen (3 pixels at 3x). Plain rounding flips back and forth when the value
+    /// hovers near a half pixel, which made the picture shake; keep the previous pixel until the
+    /// value has clearly moved on. Once settled, use the exact nearest pixel.
+    /// </summary>
+    private static int Hold(double value, int previous, bool settled) =>
+        settled || Math.Abs(value - previous) >= 0.8 ? (int)Math.Round(value) : previous;
 
     /// <summary>Waits for the next screen refresh, so every frame shows one zoom step.</summary>
     private static void WaitForNextFrame(Stopwatch clock, double last)
@@ -344,7 +354,7 @@ public sealed class ScreenMagnifier : IDisposable
         else if (p.X > x + viewW - marginX) x = p.X - viewW + marginX;
         if (p.Y < y + marginY) y = p.Y - marginY;
         else if (p.Y > y + viewH - marginY) y = p.Y - viewH + marginY;
-        if (Math.Abs(x - _view.X) > 0.5 || Math.Abs(y - _view.Y) > 0.5) _view.PanTo(x, y);
+        if (Math.Abs(x - _view.X) > 0.5 || Math.Abs(y - _view.Y) > 0.5) _view.JumpTo(x, y);
     }
 
     private void UpdateScreenSize()

@@ -81,12 +81,22 @@ public static class ImageZoomLogic
     /// </summary>
     public static string? MatchImageFile(string displayName, IEnumerable<string> fileNames)
     {
-        displayName = displayName.Trim();
+        displayName = CleanDisplayName(displayName);
         if (displayName.Length == 0) return null;
         var names = fileNames.ToList();
         var exact = names.FirstOrDefault(n => string.Equals(n, displayName, StringComparison.OrdinalIgnoreCase));
         if (exact != null) return IsImageFile(exact) ? exact : null;
         return names.FirstOrDefault(n => IsImageFile(n) && string.Equals(Path.GetFileNameWithoutExtension(n), displayName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// File Explorer adds invisible direction marks to some names (for example with Arabic or Hebrew
+    /// in Windows' languages), so "\u200Ephoto" must still find "photo.jpg".
+    /// </summary>
+    public static string CleanDisplayName(string name)
+    {
+        var chars = name.Where(c => c is not ('\u200E' or '\u200F' or '\u061C' or >= '\u202A' and <= '\u202E' or >= '\u2066' and <= '\u2069' or '\uFEFF'));
+        return new string(chars.ToArray()).Trim();
     }
 
     /// <summary>

@@ -115,10 +115,10 @@ public sealed class GestureSettings
     /// <summary>Screen zoom magnifies the picture like Chrome; the others make apps change their own zoom.</summary>
     public PinchAction PinchAction { get; set; } = PinchAction.ScreenZoom;
     public double MaxScreenZoom { get; set; } = 5;
-    /// <summary>False: enlarged pixels stay crisp. True: they are smoothed (softer, slightly blurry).</summary>
-    public bool SmoothZoomEdges { get; set; }
+    /// <summary>True: enlarged pixels are smoothed (like Windows Magnifier's "smooth edges"). False: blocky, crisp pixels.</summary>
+    public bool SmoothZoomEdges { get; set; } = true;
     /// <summary>When the fingers lift near 2x, 3x…, settle exactly there (the sharpest picture).</summary>
-    public bool SnapZoomLevels { get; set; } = true;
+    public bool SnapZoomLevels { get; set; }
     /// <summary>1..100: how far the zoomed view moves when panning with two fingers.</summary>
     public int PanSpeed { get; set; } = 40;
     /// <summary>False: the picture follows the fingers, like Chrome.</summary>
@@ -167,7 +167,7 @@ public static class SettingsStore
         Converters = { new JsonStringEnumConverter() },
     };
 
-    public const int CurrentVersion = 3;
+    public const int CurrentVersion = 4;
 
     public static string FilePath => Path.Combine(AppPaths.DataFolder, "settings.json");
 
@@ -185,6 +185,12 @@ public static class SettingsStore
         {
             // 0.1.x followed the Windows theme; the redesigned windows default to the light look.
             if (settings.Theme == ThemeMode.System) settings.Theme = ThemeMode.Light;
+        }
+        if (settings.SettingsVersion < 4)
+        {
+            // Blocky "sharp" pixels flickered while zooming; smooth edges look steadier and cleaner.
+            settings.Gestures.SmoothZoomEdges = true;
+            settings.Gestures.SnapZoomLevels = false;
         }
         settings.SettingsVersion = CurrentVersion;
         return settings;

@@ -17,7 +17,7 @@ public sealed class ZoomView
     public const double MinLevel = 1.0;
 
     /// <summary>Seconds for the shown level to cover ~63% of the way to the target while pinching.</summary>
-    public double PinchSmoothing { get; set; } = 0.045;
+    public double PinchSmoothing { get; set; } = 0.035;
 
     /// <summary>The same, for glides that are not driven by the fingers (snap, reset, following the pointer).</summary>
     public double SettleSmoothing { get; set; } = 0.085;
@@ -83,6 +83,18 @@ public sealed class ZoomView
     {
         _anchored = false;
         (TargetX, TargetY) = Clamp(TargetLevel, x, y);
+    }
+
+    /// <summary>
+    /// Moves the view at once (both what is shown and the target), for following the mouse
+    /// pointer: the pointer already moves smoothly, and gliding after it would lag and stutter.
+    /// Ends the anchor.
+    /// </summary>
+    public void JumpTo(double x, double y)
+    {
+        _anchored = false;
+        (TargetX, TargetY) = Clamp(TargetLevel, x, y);
+        (X, Y) = Clamp(Level, x, y);
     }
 
     /// <summary>

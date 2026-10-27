@@ -19,11 +19,11 @@ public sealed class ImagePreviewWindow : Window
 {
     /// <summary>Room around the frame for its shadow, in DIPs.</summary>
     private const double ShadowRoom = 14;
-    private const double Padding = 6;
+    private const double FramePadding = 6;
     private const double CaptionHeight = 28;
 
     /// <summary>Everything around the picture, in DIPs: (width, height).</summary>
-    public static (double Width, double Height) ChromeDip => (2 * (ShadowRoom + 1 + Padding), 2 * (ShadowRoom + 1 + Padding) + CaptionHeight);
+    public static (double Width, double Height) ChromeDip => (2 * (ShadowRoom + 1 + FramePadding), 2 * (ShadowRoom + 1 + FramePadding) + CaptionHeight);
 
     private readonly Image _image = new() { Stretch = Stretch.Fill };
     private readonly TextBlock _details;
@@ -73,7 +73,7 @@ public sealed class ImagePreviewWindow : Window
         {
             CornerRadius = new CornerRadius(12),
             BorderThickness = new Thickness(1),
-            Padding = new Thickness(Padding),
+            Padding = new Thickness(FramePadding),
             Margin = new Thickness(ShadowRoom),
             Child = layout,
             Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 22, ShadowDepth = 4, Direction = 270, Opacity = 0.22 },

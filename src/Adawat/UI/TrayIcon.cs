@@ -12,6 +12,7 @@ public sealed class TrayIcon : IDisposable
     private readonly AppSettings _settings;
     private readonly ToolStripMenuItem _translatorItem;
     private readonly ToolStripMenuItem _gesturesItem;
+    private readonly ToolStripMenuItem _imageZoomItem;
     private readonly ToolStripMenuItem _translateItem;
     private readonly ToolStripMenuItem _boxItem;
     private readonly ToolStripMenuItem _ocrItem;
@@ -33,6 +34,11 @@ public sealed class TrayIcon : IDisposable
             _settings.Gestures.Enabled = !_settings.Gestures.Enabled;
             settingsChanged();
         });
+        _imageZoomItem = new ToolStripMenuItem("Picture zoom on", null, (_, _) =>
+        {
+            _settings.ImageZoom.Enabled = !_settings.ImageZoom.Enabled;
+            settingsChanged();
+        });
 
         var menu = new ContextMenuStrip { ShowImageMargin = false, ShowCheckMargin = true, Padding = new Padding(2, 4, 2, 4) };
         menu.Items.Add(_boxItem);
@@ -41,6 +47,7 @@ public sealed class TrayIcon : IDisposable
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(_translatorItem);
         menu.Items.Add(_gesturesItem);
+        menu.Items.Add(_imageZoomItem);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(new ToolStripMenuItem("History", null, (_, _) => openSettingsPage("History")));
         menu.Items.Add(new ToolStripMenuItem("Settings", null, (_, _) => openSettings()));
@@ -66,6 +73,7 @@ public sealed class TrayIcon : IDisposable
     {
         _translatorItem.Checked = _settings.Translator.Enabled;
         _gesturesItem.Checked = _settings.Gestures.Enabled;
+        _imageZoomItem.Checked = _settings.ImageZoom.Enabled;
         _translateItem.ShortcutKeyDisplayString = _settings.Translator.TranslateHotkey;
         _boxItem.ShortcutKeyDisplayString = _settings.Translator.OpenBoxHotkey;
         _ocrItem.ShortcutKeyDisplayString = _settings.Ocr.Hotkey;

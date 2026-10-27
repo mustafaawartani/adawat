@@ -8,6 +8,9 @@ namespace Adawat.Core;
 
 public enum ThemeMode { System, Light, Dark }
 
+/// <summary>The color of buttons, links and highlights. "Windows" uses the Windows accent color.</summary>
+public enum AccentChoice { Blue, Indigo, Violet, Teal, Green, Rose, Orange, Graphite, Windows }
+
 public enum SelectionBehavior { ShowIcon, TranslateInstantly, DoNothing }
 
 public enum SelectionModifier { None, Alt, Ctrl, Shift }
@@ -22,7 +25,8 @@ public sealed class AppSettings
 {
     public bool StartWithWindows { get; set; } = true;
     public bool RunElevated { get; set; }
-    public ThemeMode Theme { get; set; } = ThemeMode.System;
+    public ThemeMode Theme { get; set; } = ThemeMode.Light;
+    public AccentChoice Accent { get; set; } = AccentChoice.Blue;
     public bool FirstRunCompleted { get; set; }
     /// <summary>Lets newer versions update settings saved by older ones.</summary>
     public int SettingsVersion { get; set; } = SettingsStore.CurrentVersion;
@@ -30,6 +34,7 @@ public sealed class AppSettings
     public TranslatorSettings Translator { get; set; } = new();
     public OcrSettings Ocr { get; set; } = new();
     public GestureSettings Gestures { get; set; } = new();
+    public ImageZoomSettings ImageZoom { get; set; } = new();
 }
 
 public sealed class TranslatorSettings
@@ -50,6 +55,9 @@ public sealed class TranslatorSettings
     public SelectionBehavior OnSelection { get; set; } = SelectionBehavior.ShowIcon;
     public SelectionModifier SelectionModifier { get; set; } = SelectionModifier.None;
     public bool OnlyOverText { get; set; } = true;
+    /// <summary>Keep the translate button until the selection goes away (click elsewhere, typing, scrolling, another app).</summary>
+    public bool KeepIconWhileSelected { get; set; } = true;
+    /// <summary>When <see cref="KeepIconWhileSelected"/> is off: hide the button after this many seconds.</summary>
     public double IconSeconds { get; set; } = 3;
 
     public double FontSize { get; set; } = 15;
@@ -58,6 +66,7 @@ public sealed class TranslatorSettings
     public bool ShowDictionary { get; set; } = true;
     public bool ShowTransliteration { get; set; } = true;
     public bool AutoCopyTranslation { get; set; }
+    public bool ShowOpenInGoogle { get; set; } = true;
 
     public CaptureMethod CaptureMethod { get; set; } = CaptureMethod.Automatic;
     public List<string> DisabledApps { get; set; } = new();
@@ -106,20 +115,45 @@ public sealed class GestureSettings
     /// <summary>Screen zoom magnifies the picture like Chrome; the others make apps change their own zoom.</summary>
     public PinchAction PinchAction { get; set; } = PinchAction.ScreenZoom;
     public double MaxScreenZoom { get; set; } = 5;
+    /// <summary>False: enlarged pixels stay crisp. True: they are smoothed (softer, slightly blurry).</summary>
+    public bool SmoothZoomEdges { get; set; }
+    /// <summary>When the fingers lift near 2x, 3x…, settle exactly there (the sharpest picture).</summary>
+    public bool SnapZoomLevels { get; set; } = true;
     /// <summary>1..100: how far the zoomed view moves when panning with two fingers.</summary>
     public int PanSpeed { get; set; } = 40;
     /// <summary>False: the picture follows the fingers, like Chrome.</summary>
     public bool InvertPan { get; set; }
     /// <summary>Set while Adawat has paused Windows' two-finger scrolling during a zoom.</summary>
     public bool ScrollPausedByAdawat { get; set; }
-    /// <summary>Turn off Windows' own pinch (Ctrl+wheel: icon size, font size) so it does not fight the screen zoom.</summary>
+    /// <summary>
+    /// Pause Windows' own pinch (Ctrl+wheel: icon size, font size) while the fingers are on the touchpad
+    /// over an app where the screen zoom works, so the two do not fight. The Windows setting is never changed.
+    /// </summary>
     public bool TurnOffWindowsPinch { get; set; } = true;
-    /// <summary>What Windows' pinch setting was before Adawat turned it off, to put it back later.</summary>
+    /// <summary>Only read from settings of versions that switched Windows' pinch off for good, to switch it back on.</summary>
     public bool? WindowsPinchBefore { get; set; }
     /// <summary>Skip app zoom (Ctrl+wheel modes) when Windows already turns the pinch into zoom for the app.</summary>
     public bool SkipNativePinchApps { get; set; } = true;
     public List<string> PinchDisabledApps { get; set; } = new();
 
+    public bool DisableInFullscreen { get; set; } = true;
+}
+
+/// <summary>Picture zoom: hover a picture anywhere to see it big, then save or copy it.</summary>
+public sealed class ImageZoomSettings
+{
+    public bool Enabled { get; set; } = true;
+    /// <summary>How long the pointer rests on a picture before it opens, in milliseconds.</summary>
+    public int HoverDelayMs { get; set; } = 400;
+    /// <summary>Only open while this key is held (None = always).</summary>
+    public SelectionModifier Modifier { get; set; } = SelectionModifier.None;
+    public string SaveHotkey { get; set; } = "Alt+S";
+    public string CopyHotkey { get; set; } = "Alt+C";
+    /// <summary>Pictures smaller than this (in screen pixels, both sides) are ignored, so icons don't pop up.</summary>
+    public int MinSize { get; set; } = 48;
+    /// <summary>Also enlarge pictures whose full-size file or address is unknown, from what is on screen.</summary>
+    public bool EnlargeScreenPictures { get; set; } = true;
+    public List<string> DisabledApps { get; set; } = new();
     public bool DisableInFullscreen { get; set; } = true;
 }
 
@@ -133,7 +167,7 @@ public static class SettingsStore
         Converters = { new JsonStringEnumConverter() },
     };
 
-    public const int CurrentVersion = 2;
+    public const int CurrentVersion = 3;
 
     public static string FilePath => Path.Combine(AppPaths.DataFolder, "settings.json");
 
@@ -146,6 +180,11 @@ public static class SettingsStore
             settings.Gestures.PinchAction = PinchAction.ScreenZoom;
             settings.Gestures.PinchDisabledApps = new();
             settings.Gestures.TurnOffWindowsPinch = true;
+        }
+        if (settings.SettingsVersion < 3)
+        {
+            // 0.1.x followed the Windows theme; the redesigned windows default to the light look.
+            if (settings.Theme == ThemeMode.System) settings.Theme = ThemeMode.Light;
         }
         settings.SettingsVersion = CurrentVersion;
         return settings;

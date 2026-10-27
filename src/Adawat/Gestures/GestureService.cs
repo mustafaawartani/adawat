@@ -29,11 +29,11 @@ public sealed class GestureService : IDisposable
     private long _lastFrameMs;
     private volatile bool _zoomed;
     private bool _scrollPaused;
+    private int _lastContactCount;
+    private bool _windowsPinchPaused;
+    private readonly bool _windowsPinchAtStart;
 
     public bool IsRunning { get; private set; }
-
-    /// <summary>Null when Adawat is not managing Windows' pinch; otherwise whether turning it off took effect right away.</summary>
-    public bool? WindowsPinchOffApplied { get; private set; }
 
     public GestureService(AppSettings settings, MessageWindow window)
     {
@@ -48,6 +48,12 @@ public sealed class GestureService : IDisposable
             WindowsTouchpad.SetTwoFingerScroll(true);
             settings.Gestures.ScrollPausedByAdawat = false;
         }
+        // Earlier versions switched Windows' pinch off and saved that, so it kept turning itself
+        // off even after the user switched it back on. Give back what the user had.
+        if (settings.Gestures.WindowsPinchBefore == true) WindowsTouchpad.SetPinchZoom(true);
+        settings.Gestures.WindowsPinchBefore = null;
+        _windowsPinchAtStart = WindowsTouchpad.SavedPinchZoom() ?? WindowsTouchpad.IsPinchZoomEnabled() ?? true;
+        RestoreWindowsPinch(force: true); // in case Adawat closed while it was paused
         _idleTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(120) };
         _idleTimer.Tick += (_, _) =>
         {
@@ -55,6 +61,7 @@ public sealed class GestureService : IDisposable
             if (Environment.TickCount64 - _lastFrameMs > 250)
             {
                 _idleTimer.Stop();
+                UpdateWindowsPinch(0);
                 Handle(_engine.Reset(Environment.TickCount64));
             }
         };
@@ -79,9 +86,11 @@ public sealed class GestureService : IDisposable
         _magnifier.Gain = 0.8 + 1.7 * Math.Clamp(g.PinchSensitivity, 1, 100) / 100.0;
         _magnifier.PanSpeed = 0.6 + 2.4 * Math.Clamp(g.PanSpeed, 1, 100) / 100.0;
         _magnifier.InvertPan = g.InvertPan;
+        _magnifier.SnapToWholeLevels = g.SnapZoomLevels;
+        _magnifier.SmoothEdges = g.SmoothZoomEdges;
         bool screenZoom = g.Enabled && g.PinchEnabled && g.PinchAction == PinchAction.ScreenZoom;
         if (!screenZoom) _magnifier.Reset();
-        ApplyWindowsPinch(screenZoom && g.TurnOffWindowsPinch);
+        if (!screenZoom || !g.TurnOffWindowsPinch) RestoreWindowsPinch();
 
         bool wanted = g.Enabled && (g.SwipeEnabled || g.PinchEnabled);
         if (wanted && !IsRunning) IsRunning = _reader.Start();
@@ -94,25 +103,44 @@ public sealed class GestureService : IDisposable
     }
 
     /// <summary>
-    /// Windows' own pinch makes apps change icon/font size. Screen zoom turns it off (remembering
-    /// the old value) and puts it back when screen zoom is no longer used.
+    /// Windows' own pinch makes apps change icon or text size, which would happen on top of the
+    /// screen zoom. Instead of switching it off for good, Adawat pauses it only while fingers are on
+    /// the touchpad over an app where the screen zoom works, and puts the user's setting back when
+    /// they lift. Apps in the "pinching does nothing" list keep Windows' pinch, and the Windows
+    /// setting itself is never changed.
     /// </summary>
-    private void ApplyWindowsPinch(bool turnOff)
+    private void UpdateWindowsPinch(int contacts)
     {
         var g = _settings.Gestures;
-        if (turnOff)
+        bool touchStarted = contacts > 0 && _lastContactCount == 0;
+        bool secondFinger = contacts >= 2 && _lastContactCount < 2;
+        _lastContactCount = contacts;
+        if (contacts == 0)
         {
-            var current = WindowsTouchpad.IsPinchZoomEnabled();
-            g.WindowsPinchBefore ??= current ?? true;
-            if (current != false) WindowsPinchOffApplied = WindowsTouchpad.SetPinchZoom(false);
-            else WindowsPinchOffApplied ??= true;
+            RestoreWindowsPinch();
+            return;
         }
-        else
+        if (!touchStarted && !secondFinger) return;
+
+        bool pause = false;
+        if (g.Enabled && g.PinchEnabled && g.PinchAction == PinchAction.ScreenZoom && g.TurnOffWindowsPinch && UserWantsWindowsPinch())
         {
-            if (g.WindowsPinchBefore == true) WindowsTouchpad.SetPinchZoom(true);
-            g.WindowsPinchBefore = null;
-            WindowsPinchOffApplied = null;
+            var window = WindowInfo.RootWindowAt(WindowInfo.CursorPosition());
+            pause = window != IntPtr.Zero
+                    && !WindowInfo.ListContains(g.PinchDisabledApps, WindowInfo.ProcessName(window))
+                    && !(g.DisableInFullscreen && WindowInfo.IsFullscreenAppRunning());
         }
+        if (pause && !_windowsPinchPaused) _windowsPinchPaused = WindowsTouchpad.SetPinchZoomForNow(false);
+        else if (!pause) RestoreWindowsPinch();
+    }
+
+    private bool UserWantsWindowsPinch() => WindowsTouchpad.SavedPinchZoom() ?? _windowsPinchAtStart;
+
+    private void RestoreWindowsPinch(bool force = false)
+    {
+        if (!_windowsPinchPaused && !force) return;
+        _windowsPinchPaused = false;
+        if (UserWantsWindowsPinch()) WindowsTouchpad.SetPinchZoomForNow(true);
     }
 
     public void ResetZoom() => _magnifier.Reset();
@@ -157,6 +185,7 @@ public sealed class GestureService : IDisposable
     private void OnFrame(IReadOnlyList<TouchContact> contacts)
     {
         Interlocked.Exchange(ref _lastFrameMs, Environment.TickCount64);
+        UpdateWindowsPinch(contacts.Count);
         _engine.Config.PanMode = _magnifier.IsZoomed && _settings.Gestures.PinchAction == PinchAction.ScreenZoom;
         if (contacts.Count > 0 && !_idleTimer.IsEnabled) _idleTimer.Start();
         Handle(_engine.Process(contacts, _lastFrameMs));
@@ -279,6 +308,7 @@ public sealed class GestureService : IDisposable
     public void Dispose()
     {
         _idleTimer.Stop();
+        RestoreWindowsPinch();
         _reader.Dispose();
         _magnifier.Dispose();
         _overlay?.Close();

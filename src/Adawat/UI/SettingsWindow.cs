@@ -50,6 +50,7 @@ public sealed class SettingsWindow : FluentWindow
             ("Translator", SymbolRegular.Translate24, BuildTranslator),
             ("Text from screen", SymbolRegular.ScanText24, BuildOcr),
             ("Touchpad gestures", SymbolRegular.SwipeRight24, BuildGestures),
+            ("Picture zoom", SymbolRegular.ImageSearch24, BuildImageZoom),
             ("History", SymbolRegular.History24, BuildHistory),
             ("About", SymbolRegular.Info24, BuildAbout),
         };
@@ -132,6 +133,7 @@ public sealed class SettingsWindow : FluentWindow
                      $"{S.Translator.OpenBoxHotkey}  —  open the translator box",
                      "Select text with the mouse  —  a small translate button appears next to it",
                      "Two-finger swipe left/right  —  back/forward;  pinch  —  zoom",
+                     $"Rest the pointer on a picture  —  see it big;  {S.ImageZoom.SaveHotkey} saves it to Downloads, {S.ImageZoom.CopyHotkey} copies it",
                  })
         {
             var t = Ui.Text("•  " + line, 13, secondary: true);
@@ -164,13 +166,15 @@ public sealed class SettingsWindow : FluentWindow
             elevatedToggle));
 
         p.Children.Add(Ui.SectionTitle("Appearance"));
-        p.Children.Add(Ui.Card(SymbolRegular.DarkTheme24, "Theme", "Follow Windows, or always use light or dark.",
+        p.Children.Add(Ui.Card(SymbolRegular.DarkTheme24, "Theme", "For the translator, the picture preview and this window.",
             EnumCombo(S.Theme, new Dictionary<ThemeMode, string>
             {
-                [ThemeMode.System] = "Same as Windows",
                 [ThemeMode.Light] = "Light",
                 [ThemeMode.Dark] = "Dark",
-            }, v => { S.Theme = v; ThemeHelper.SetMode(v); Changed(); })));
+                [ThemeMode.System] = "Same as Windows",
+            }, v => { S.Theme = v; ThemeHelper.Set(S.Theme, S.Accent); Changed(); })));
+        p.Children.Add(Ui.Card(SymbolRegular.Color24, "Accent color", "Buttons, links and highlights.",
+            AccentPicker()));
 
         return p;
     }
@@ -218,8 +222,14 @@ public sealed class SettingsWindow : FluentWindow
             }, v => { t.SelectionModifier = v; Changed(); })));
         p.Children.Add(Ui.Card(SymbolRegular.TapSingle24, "Only when selecting text", "Ignore drags that start on something that is not text (files, windows, pictures).",
             Ui.Toggle(t.OnlyOverText, v => { t.OnlyOverText = v; Changed(); })));
-        p.Children.Add(Ui.Card(SymbolRegular.Timer24, "Hide the translate button after", null,
-            SliderRow(1, 10, t.IconSeconds, v => $"{v:0} s", v => { t.IconSeconds = Math.Round(v); Changed(); })));
+        p.Children.Add(Ui.Card(SymbolRegular.CursorHover24, "Keep the translate button while the text is selected",
+            "It goes away when you click somewhere else, type, scroll or switch apps. Turn off to hide it after a few seconds instead.",
+            Ui.Toggle(t.KeepIconWhileSelected, v => { t.KeepIconWhileSelected = v; Changed(); ShowPage("Translator"); })));
+        if (!t.KeepIconWhileSelected)
+        {
+            p.Children.Add(Ui.Card(SymbolRegular.Timer24, "Hide the translate button after", null,
+                SliderRow(1, 10, t.IconSeconds, v => $"{v:0} s", v => { t.IconSeconds = Math.Round(v); Changed(); })));
+        }
 
         p.Children.Add(Ui.SectionTitle("Translation window"));
         p.Children.Add(Ui.Card(SymbolRegular.TextFont24, "Text size", null,
@@ -234,6 +244,8 @@ public sealed class SettingsWindow : FluentWindow
             Ui.Toggle(t.ShowTransliteration, v => { t.ShowTransliteration = v; Changed(); })));
         p.Children.Add(Ui.Card(SymbolRegular.Copy24, "Copy the translation automatically", null,
             Ui.Toggle(t.AutoCopyTranslation, v => { t.AutoCopyTranslation = v; Changed(); })));
+        p.Children.Add(Ui.Card(SymbolRegular.Open24, "Show \"Open in Google Translate\"", "The link at the bottom of the translation window.",
+            Ui.Toggle(t.ShowOpenInGoogle, v => { t.ShowOpenInGoogle = v; Changed(); })));
 
         p.Children.Add(Ui.SectionTitle("Advanced"));
         p.Children.Add(Ui.Card(SymbolRegular.Clipboard24, "How to read the selected text", "Automatic copies the selection with Ctrl+C and restores your clipboard; if that finds nothing it uses Windows accessibility.",
@@ -359,6 +371,13 @@ public sealed class SettingsWindow : FluentWindow
                 SliderRow(1, 100, g.PinchSensitivity, v => $"{v:0}", v => { g.PinchSensitivity = (int)Math.Round(v); Changed(); })));
             p.Children.Add(Ui.Card(SymbolRegular.ZoomIn24, "Maximum zoom", null,
                 SliderRow(2, 10, g.MaxScreenZoom, v => $"{v:0}x", v => { g.MaxScreenZoom = Math.Round(v); Changed(); })));
+            p.Children.Add(Ui.Card(SymbolRegular.Eye24, "Picture",
+                "Sharp keeps text and edges crisp. Smooth softens the enlarged pixels, which looks gentler on photos but a little blurry.",
+                EnumCombo(g.SmoothZoomEdges, new Dictionary<bool, string> { [false] = "Sharp", [true] = "Smooth" },
+                    v => { g.SmoothZoomEdges = v; Changed(); })));
+            p.Children.Add(Ui.Card(SymbolRegular.ZoomFit24, "Settle on whole zoom levels",
+                "When you lift your fingers close to 2x, 3x…, the zoom settles exactly there, where the picture is sharpest.",
+                Ui.Toggle(g.SnapZoomLevels, v => { g.SnapZoomLevels = v; Changed(); })));
             p.Children.Add(Ui.Card(SymbolRegular.ArrowMove24, "Moving around while zoomed",
                 "While zoomed, slide two fingers in any direction to move the zoomed view, like in Chrome. " +
                 "The app underneath does not scroll and back/forward swipes pause until you zoom out.",
@@ -366,21 +385,11 @@ public sealed class SettingsWindow : FluentWindow
             p.Children.Add(Ui.Card(SymbolRegular.ArrowSwap24, "Reverse moving direction", "Off: the picture follows your fingers, like Chrome.",
                 Ui.Toggle(g.InvertPan, v => { g.InvertPan = v; Changed(); })));
 
-            string windowsPinch = _host.WindowsPinchOffApplied switch
-            {
-                true => "Done: Windows' own pinch is off, so File Explorer and other apps no longer change icon or text size when you pinch. Ctrl + Plus / Minus and Ctrl + mouse wheel still work as usual.",
-                false => "Adawat saved this change, but Windows will only use it after you sign out and back in. To do it right now: open the touchpad settings → Scroll & zoom → untick \"Pinch to zoom\".",
-                _ => "When on, pinching no longer makes apps change icon or text size; only the screen zoom happens. Ctrl + Plus / Minus still work.",
-            };
-            var windowsPinchControls = new StackPanel { Orientation = Orientation.Horizontal };
-            if (_host.WindowsPinchOffApplied == false)
-            {
-                var open = Ui.Button("Touchpad settings", () => OpenUri("ms-settings:devices-touchpad"));
-                open.Margin = new Thickness(0, 0, 12, 0);
-                windowsPinchControls.Children.Add(open);
-            }
-            windowsPinchControls.Children.Add(Ui.Toggle(g.TurnOffWindowsPinch, v => { g.TurnOffWindowsPinch = v; Changed(); ShowPage("Touchpad gestures"); }));
-            p.Children.Add(Ui.Card(SymbolRegular.Prohibited24, "Turn off Windows' own pinch (icon and text size)", windowsPinch, windowsPinchControls));
+            p.Children.Add(Ui.Card(SymbolRegular.Prohibited24, "Stop Windows' pinch from also resizing apps",
+                "Windows' own pinch makes File Explorer and other apps change icon or text size. While your fingers are on the " +
+                "touchpad over an app where Adawat zooms, Windows' pinch is paused for that moment only. Your Windows setting is " +
+                "never changed, and in the apps listed under \"Apps where pinching does nothing\" Windows' pinch works as usual.",
+                Ui.Toggle(g.TurnOffWindowsPinch, v => { g.TurnOffWindowsPinch = v; Changed(); })));
             p.Children.Add(Ui.Card(SymbolRegular.ArrowReset24, "Back to normal size", "Pinch your fingers together, or use this button.",
                 Ui.Button("Reset zoom", () => _host.ResetZoom())));
         }
@@ -394,12 +403,52 @@ public sealed class SettingsWindow : FluentWindow
         }
         p.Children.Add(Ui.Card(SymbolRegular.ArrowSwap24, "Reverse zoom direction", null,
             Ui.Toggle(g.InvertPinch, v => { g.InvertPinch = v; Changed(); })));
-        p.Children.Add(AppListCard("Apps where pinching does nothing", "One program per line, e.g. game.exe",
+        p.Children.Add(AppListCard("Apps where pinching does nothing",
+            "Adawat leaves the pinch to these apps (and to Windows), e.g. chrome.exe to keep Chrome's own zoom. One program per line.",
             g.PinchDisabledApps, v => { g.PinchDisabledApps = v; Changed(); }));
 
         p.Children.Add(Ui.SectionTitle("Other"));
         p.Children.Add(Ui.Card(SymbolRegular.Games24, "Pause gestures in full-screen apps", "Games, videos and presentations.",
             Ui.Toggle(g.DisableInFullscreen, v => { g.DisableInFullscreen = v; Changed(); })));
+        return p;
+    }
+
+    private UIElement BuildImageZoom()
+    {
+        var z = S.ImageZoom;
+        var p = new StackPanel();
+        p.Children.Add(Ui.Card(SymbolRegular.ImageSearch24, "Picture zoom",
+            "Rest the pointer on a picture in any app to see it big, like the Photo Zoom browser extension. Works in browsers, " +
+            "File Explorer, the desktop, chat apps and more.",
+            Ui.Toggle(z.Enabled, v => { z.Enabled = v; Changed(); })));
+
+        p.Children.Add(Ui.SectionTitle("Shortcuts while a picture is open"));
+        p.Children.Add(HotkeyCard(SymbolRegular.ArrowDownload24, "Save to Downloads",
+            "Saves the full picture in your Downloads folder. Only active while the preview is open, so other apps keep this shortcut.",
+            "imagesave", z.SaveHotkey, v => { z.SaveHotkey = v; Changed(); }));
+        p.Children.Add(HotkeyCard(SymbolRegular.Copy24, "Copy to the clipboard", "Paste it into chats, documents or image editors.",
+            "imagecopy", z.CopyHotkey, v => { z.CopyHotkey = v; Changed(); }));
+
+        p.Children.Add(Ui.SectionTitle("When to open"));
+        p.Children.Add(Ui.Card(SymbolRegular.Timer24, "Wait before opening", "How long the pointer rests on a picture first.",
+            SliderRow(0, 1500, z.HoverDelayMs, v => $"{v / 1000:0.0} s", v => { z.HoverDelayMs = (int)(Math.Round(v / 50) * 50); Changed(); })));
+        p.Children.Add(Ui.Card(SymbolRegular.KeyboardShift24, "Only while holding a key", "Open pictures only while this key is held down.",
+            EnumCombo(z.Modifier, new Dictionary<SelectionModifier, string>
+            {
+                [SelectionModifier.None] = "No key needed",
+                [SelectionModifier.Alt] = "Alt",
+                [SelectionModifier.Ctrl] = "Ctrl",
+                [SelectionModifier.Shift] = "Shift",
+            }, v => { z.Modifier = v; Changed(); })));
+        p.Children.Add(Ui.Card(SymbolRegular.ResizeSmall24, "Ignore small pictures", "Icons and pictures smaller than this are left alone.",
+            SliderRow(24, 200, z.MinSize, v => $"{v:0} px", v => { z.MinSize = (int)Math.Round(v); Changed(); })));
+        p.Children.Add(Ui.Card(SymbolRegular.ScreenSearch24, "Enlarge pictures from the screen",
+            "Picture files and pictures that link to their full size open at full quality. For other pictures (most web pages) " +
+            "Adawat can only enlarge what is on screen, which is less sharp. Turn off to open only full-quality pictures.",
+            Ui.Toggle(z.EnlargeScreenPictures, v => { z.EnlargeScreenPictures = v; Changed(); })));
+        p.Children.Add(Ui.Card(SymbolRegular.Games24, "Pause in full-screen apps", "Games, videos and presentations.",
+            Ui.Toggle(z.DisableInFullscreen, v => { z.DisableInFullscreen = v; Changed(); })));
+        p.Children.Add(AppListCard("Apps where picture zoom is off", "One program per line, e.g. photoshop.exe", z.DisabledApps, v => { z.DisabledApps = v; Changed(); }));
         return p;
     }
 
@@ -482,6 +531,56 @@ public sealed class SettingsWindow : FluentWindow
     }
 
     // ---- Building blocks ------------------------------------------------------------------
+
+    /// <summary>A row of round color swatches; the chosen one has a ring around it.</summary>
+    private UIElement AccentPicker()
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal };
+        var rings = new List<(AccentChoice Choice, Border Ring)>();
+
+        void Refresh()
+        {
+            foreach (var (choice, ring) in rings)
+                ring.BorderBrush = choice == S.Accent ? new SolidColorBrush(ThemeHelper.AccentColor) : Brushes.Transparent;
+        }
+
+        void Add(AccentChoice choice, Brush fill, string name)
+        {
+            var dot = new Border { Width = 20, Height = 20, CornerRadius = new CornerRadius(10), Background = fill };
+            var ring = new Border
+            {
+                Width = 30,
+                Height = 30,
+                CornerRadius = new CornerRadius(15),
+                BorderThickness = new Thickness(2),
+                Child = dot,
+                Margin = new Thickness(2, 0, 2, 0),
+                Cursor = Cursors.Hand,
+                ToolTip = name,
+                Background = Brushes.Transparent,
+            };
+            ring.MouseLeftButtonUp += (_, _) =>
+            {
+                S.Accent = choice;
+                ThemeHelper.Set(S.Theme, S.Accent);
+                Refresh();
+                Changed();
+            };
+            rings.Add((choice, ring));
+            row.Children.Add(ring);
+        }
+
+        foreach (var (choice, color) in ThemeHelper.AccentColors) Add(choice, new SolidColorBrush(color), choice.ToString());
+        // "Same as Windows": a split swatch, since the color depends on the Windows settings.
+        var windows = new LinearGradientBrush(new GradientStopCollection
+        {
+            new(Color.FromRgb(0x00, 0x67, 0xC0), 0), new(Color.FromRgb(0x00, 0x67, 0xC0), 0.5),
+            new(Color.FromRgb(0xC2, 0xC9, 0xD3), 0.5), new(Color.FromRgb(0xC2, 0xC9, 0xD3), 1),
+        }, new Point(0, 0), new Point(1, 1));
+        Add(AccentChoice.Windows, windows, "Same as Windows");
+        Refresh();
+        return row;
+    }
 
     private CardControl HotkeyCard(SymbolRegular icon, string title, string description, string name, string value, Action<string> changed)
     {

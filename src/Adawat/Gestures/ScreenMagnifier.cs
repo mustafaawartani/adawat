@@ -1,5 +1,7 @@
 using System;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Windows.Threading;
 using Adawat.Core;
 using Adawat.Interop;
@@ -11,6 +13,9 @@ namespace Adawat.Gestures;
 /// (the same one the Windows Magnifier uses). Nothing inside apps changes size: the picture
 /// on screen is magnified around the pointer, and moving the pointer pans the view.
 /// Clicks keep landing where the magnified pointer shows.
+///
+/// The zoom is drawn by its own thread in step with the screen refresh (see <see cref="ZoomView"/>
+/// for the smoothing), so it stays fluid even while the app is busy.
 /// </summary>
 public sealed class ScreenMagnifier : IDisposable
 {
@@ -23,32 +28,43 @@ public sealed class ScreenMagnifier : IDisposable
     [DllImport("Magnification.dll", SetLastError = true)]
     private static extern bool MagSetFullscreenTransform(float magLevel, int xOffset, int yOffset);
 
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr LoadLibrary(string name);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Ansi)]
+    private static extern IntPtr GetProcAddress(IntPtr module, string name);
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmFlush();
+
     [DllImport("user32.dll")]
     private static extern bool SetCursorPos(int x, int y);
 
-    private const double MinLevel = 1.0;
-    private readonly DispatcherTimer _follow;
-    private readonly DispatcherTimer _glide;
-    private double _glideVx, _glideVy;      // screen pixels per frame
-    private bool _panning;
-    private bool _initialized;
+    /// <summary>Not in the documentation, but exported since Windows 10: smooth (true) or sharp pixels (false).</summary>
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+    private delegate bool SetSmoothingProc([MarshalAs(UnmanagedType.Bool)] bool smooth);
+
+    private readonly object _gate = new();
+    private readonly ZoomView _view = new();
+    private readonly AutoResetEvent _wake = new(false);
+    private readonly Dispatcher _dispatcher = Dispatcher.CurrentDispatcher;
+    private Thread? _thread;
+    private volatile bool _stopping;
     private bool _failed;
 
-    private double _level = 1;
-    private double _offsetX, _offsetY;      // top-left of the magnified area, in screen pixels
+    // State shared with the frame thread (guarded by _gate)
+    private bool _panning, _gliding;
+    private double _glideVx, _glideVy;              // screen pixels per second
+    private double _cursorShownX, _cursorShownY;    // where the pointer stays on screen while panning
+    private bool _holdCursor;
+    private bool _smoothingWanted;
+    private bool? _smoothingApplied;
+    private bool _wasZoomed;
 
-    // Pinch state
-    private bool _pinching;
-    private double _pinchStartLevel;
-    private double _anchorX, _anchorY;      // screen point under the fingers when the pinch began
-    private double _anchorShownX, _anchorShownY; // where that point appeared on screen
-
-    public double MaxLevel { get; set; } = 5;
+    public double MaxLevel { get => _view.MaxLevel; set { lock (_gate) _view.MaxLevel = value; } }
 
     /// <summary>How strongly finger movement changes the zoom (1 = proportional).</summary>
     public double Gain { get; set; } = 1.5;
-
-    public bool IsZoomed => _level > MinLevel + 0.001;
 
     /// <summary>How far the view moves for a finger movement (1 = one touchpad width moves one screen width).</summary>
     public double PanSpeed { get; set; } = 1.6;
@@ -56,74 +72,61 @@ public sealed class ScreenMagnifier : IDisposable
     /// <summary>False: the content follows the fingers (like Chrome). True: the view follows the fingers.</summary>
     public bool InvertPan { get; set; }
 
-    /// <summary>Raised when the screen goes from normal size to zoomed (true) or back (false).</summary>
+    /// <summary>Round the zoom to 2x, 3x… when the fingers lift close to one, for the sharpest picture.</summary>
+    public bool SnapToWholeLevels { get; set; } = true;
+
+    /// <summary>True: soften the enlarged pixels (smoother edges, a little blurry). False: crisp pixels.</summary>
+    public bool SmoothEdges
+    {
+        get => _smoothingWanted;
+        set
+        {
+            lock (_gate) _smoothingWanted = value;
+            _wake.Set();
+        }
+    }
+
+    public bool IsZoomed
+    {
+        get { lock (_gate) return _view.IsZoomed; }
+    }
+
+    /// <summary>Raised on the UI thread when the screen goes from normal size to zoomed (true) or back (false).</summary>
     public event Action<bool>? ZoomedChanged;
 
-    public ScreenMagnifier()
-    {
-        _follow = new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(16) };
-        _follow.Tick += (_, _) => FollowPointer();
-        _glide = new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(16) };
-        _glide.Tick += (_, _) => GlideStep();
-    }
-
-    private bool EnsureInitialized()
-    {
-        if (_initialized) return true;
-        if (_failed) return false;
-        try
-        {
-            _initialized = MagInitialize();
-            if (!_initialized) Log.Error($"Screen zoom could not start (error {Marshal.GetLastWin32Error()})");
-        }
-        catch (Exception ex)
-        {
-            Log.Error("Screen zoom is not available", ex);
-        }
-        _failed = !_initialized;
-        return _initialized;
-    }
-
-    private static (int Width, int Height) ScreenSize()
-    {
-        var bounds = System.Windows.Forms.Screen.PrimaryScreen?.Bounds ?? System.Windows.Forms.SystemInformation.VirtualScreen;
-        return (bounds.Width, bounds.Height);
-    }
-
-    public void BeginPinch()
-    {
-        if (!EnsureInitialized()) return;
-        var p = WindowInfo.CursorPosition();
-        _pinching = true;
-        _pinchStartLevel = _level;
-        _anchorX = p.X;
-        _anchorY = p.Y;
-        _anchorShownX = (p.X - _offsetX) * _level;
-        _anchorShownY = (p.Y - _offsetY) * _level;
-        _follow.Stop();
-        _glide.Stop();
-    }
+    private double _pinchStartLevel;
 
     /// <summary><paramref name="fingerScale"/>: finger distance now / at the start of the pinch.</summary>
     public void UpdatePinch(double fingerScale)
     {
-        if (!_pinching) BeginPinch();
-        if (!_initialized) return;
-
-        double level = _pinchStartLevel * Math.Pow(Math.Max(fingerScale, 0.01), Gain);
-        level = Math.Clamp(level, MinLevel, Math.Max(MinLevel, MaxLevel));
-
-        // Keep the point under the fingers where it appears on screen while zooming.
-        double x = _anchorX - _anchorShownX / level;
-        double y = _anchorY - _anchorShownY / level;
-        Apply(level, x, y);
+        if (!EnsureRunning()) return;
+        lock (_gate)
+        {
+            if (!_view.Pinching)
+            {
+                // Start of a pinch: the point under the pointer stays where it is on screen.
+                var p = WindowInfo.CursorPosition();
+                _view.Pinching = true;
+                _panning = _gliding = _holdCursor = false;
+                _pinchStartLevel = _view.TargetLevel;
+                UpdateScreenSize();
+                _view.AnchorAt(p.X, p.Y);
+            }
+            _view.ZoomTo(_pinchStartLevel * Math.Pow(Math.Max(fingerScale, 0.01), Gain));
+        }
+        _wake.Set();
     }
 
     public void EndPinch()
     {
-        _pinching = false;
-        if (_level < 1.06) Reset();
-        else _follow.Start();
+        lock (_gate)
+        {
+            if (!_view.Pinching) return;
+            _view.Pinching = false;
+            if (_view.TargetLevel < 1.1) _view.ZoomTo(1);
+            else if (SnapToWholeLevels) _view.SnapToWholeLevel();
+        }
+        _wake.Set();
     }
 
     // ---- Panning with two fingers while zoomed -----------------------------------------
@@ -131,109 +134,157 @@ public sealed class ScreenMagnifier : IDisposable
     /// <summary>Moves the zoomed view by a finger movement (in touchpad widths).</summary>
     public void Pan(double fingerDx, double fingerDy)
     {
-        if (!IsZoomed || !_initialized) return;
-        if (!_panning)
+        lock (_gate)
         {
+            if (!_view.IsZoomed) return;
+            if (!_panning) BeginHoldingCursor();
             _panning = true;
-            _follow.Stop();
-            _glide.Stop();
+            _gliding = false;
+            double pixels = _view.ScreenWidth * PanSpeed / _view.TargetLevel;
+            double sign = InvertPan ? 1 : -1;
+            _view.PanBy(sign * fingerDx * pixels, sign * fingerDy * pixels);
         }
-        var (width, _) = ScreenSize();
-        // A finger movement across the touchpad moves the picture by about PanSpeed screens.
-        double pixels = width * PanSpeed / _level;
-        double sign = InvertPan ? 1 : -1;
-        MoveView(sign * fingerDx * pixels, sign * fingerDy * pixels);
+        _wake.Set();
     }
 
     /// <summary>Fingers lifted: keep gliding a little with the finger speed (touchpad widths per second), like Chrome.</summary>
     public void EndPan(double velocityX, double velocityY)
     {
-        _panning = false;
-        if (!IsZoomed) return;
-        var (width, _) = ScreenSize();
-        double pixels = width * PanSpeed / _level;
-        double sign = InvertPan ? 1 : -1;
-        _glideVx = sign * velocityX * pixels / 60.0;
-        _glideVy = sign * velocityY * pixels / 60.0;
-        if (Math.Abs(_glideVx) + Math.Abs(_glideVy) > 1.5) _glide.Start();
-        else _follow.Start();
-    }
-
-    private void GlideStep()
-    {
-        _glideVx *= 0.92;
-        _glideVy *= 0.92;
-        if (!IsZoomed || Math.Abs(_glideVx) + Math.Abs(_glideVy) < 0.5)
+        lock (_gate)
         {
-            _glide.Stop();
-            if (IsZoomed) _follow.Start();
-            return;
+            _panning = false;
+            if (!_view.IsZoomed) return;
+            double pixels = _view.ScreenWidth * PanSpeed / _view.TargetLevel;
+            double sign = InvertPan ? 1 : -1;
+            _glideVx = sign * velocityX * pixels;
+            _glideVy = sign * velocityY * pixels;
+            _gliding = Math.Abs(_glideVx) + Math.Abs(_glideVy) > 90;
         }
-        MoveView(_glideVx, _glideVy);
+        _wake.Set();
     }
 
-    /// <summary>
-    /// Shifts the visible area and moves the pointer with it, so the pointer stays at the same
-    /// place on screen while the picture slides underneath (and the view does not snap back to it).
-    /// </summary>
-    private void MoveView(double dx, double dy)
+    /// <summary>Remembers where the pointer is on screen, so it stays there while the picture slides under it.</summary>
+    private void BeginHoldingCursor()
     {
-        var cursor = WindowInfo.CursorPosition();
-        double shownX = (cursor.X - _offsetX) * _level;
-        double shownY = (cursor.Y - _offsetY) * _level;
-        Apply(_level, _offsetX + dx, _offsetY + dy);
-        SetCursorPos((int)Math.Round(_offsetX + shownX / _level), (int)Math.Round(_offsetY + shownY / _level));
+        var p = WindowInfo.CursorPosition();
+        (_cursorShownX, _cursorShownY) = _view.Shown(p.X, p.Y);
+        _holdCursor = true;
     }
 
     public void Reset()
     {
-        _pinching = false;
-        _panning = false;
-        _glide.Stop();
-        _follow.Stop();
-        if (_initialized) Apply(1, 0, 0);
-    }
-
-    private void Apply(double level, double x, double y)
-    {
-        var (width, height) = ScreenSize();
-        x = Math.Clamp(x, 0, Math.Max(0, width - width / level));
-        y = Math.Clamp(y, 0, Math.Max(0, height - height / level));
-        bool wasZoomed = IsZoomed;
-        _level = level;
-        _offsetX = x;
-        _offsetY = y;
-        if (!MagSetFullscreenTransform((float)level, (int)Math.Round(x), (int)Math.Round(y)))
-            Log.Error($"Screen zoom failed (error {Marshal.GetLastWin32Error()})");
-        if (wasZoomed != IsZoomed) ZoomedChanged?.Invoke(IsZoomed);
-    }
-
-    /// <summary>While zoomed, pan so the pointer never leaves the visible area.</summary>
-    private void FollowPointer()
-    {
-        if (!IsZoomed)
+        lock (_gate)
         {
-            _follow.Stop();
-            return;
+            _panning = _gliding = _holdCursor = false;
+            _view.Pinching = false;
+            _view.PanTo(0, 0);
+            _view.ZoomTo(1);
         }
-        var (width, height) = ScreenSize();
-        var p = WindowInfo.CursorPosition();
-        double viewW = width / _level, viewH = height / _level;
-        double marginX = viewW * 0.08, marginY = viewH * 0.08;
-        double x = _offsetX, y = _offsetY;
-        if (p.X < x + marginX) x = p.X - marginX;
-        else if (p.X > x + viewW - marginX) x = p.X - viewW + marginX;
-        if (p.Y < y + marginY) y = p.Y - marginY;
-        else if (p.Y > y + viewH - marginY) y = p.Y - viewH + marginY;
-        if (Math.Abs(x - _offsetX) > 0.5 || Math.Abs(y - _offsetY) > 0.5) Apply(_level, x, y);
+        _wake.Set();
     }
 
-    public void Dispose()
+    // ---- The frame thread ---------------------------------------------------------------
+
+    private bool EnsureRunning()
     {
-        _follow.Stop();
-        _glide.Stop();
-        if (IsZoomed) ZoomedChanged?.Invoke(false);
-        if (!_initialized) return;
+        if (_thread != null) return !_failed;
+        if (_failed) return false;
+        var ready = new ManualResetEventSlim();
+        _thread = new Thread(() => Run(ready))
+        {
+            IsBackground = true,
+            Name = "Adawat screen zoom",
+            Priority = ThreadPriority.AboveNormal,
+        };
+        _thread.Start();
+        ready.Wait(2000);
+        return !_failed;
+    }
+
+    private void Run(ManualResetEventSlim ready)
+    {
+        // The magnification API belongs to the thread that initialized it, so all calls are made here.
+        try
+        {
+            if (!MagInitialize())
+            {
+                Log.Error($"Screen zoom could not start (error {Marshal.GetLastWin32Error()})");
+                _failed = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Screen zoom is not available", ex);
+            _failed = true;
+        }
+        ready.Set();
+        if (_failed) return;
+
+        var setSmoothing = LoadSmoothingSwitch();
+        var clock = Stopwatch.StartNew();
+        double last = clock.Elapsed.TotalSeconds;
+        int appliedX = 0, appliedY = 0;
+        float appliedLevel = 1;
+
+        while (!_stopping)
+        {
+            bool active;
+            lock (_gate) active = _view.IsZoomed || !_view.IsSettled || _smoothingApplied != _smoothingWanted;
+            if (!active)
+            {
+                _wake.WaitOne();
+                last = clock.Elapsed.TotalSeconds;
+                continue;
+            }
+
+            WaitForNextFrame(clock, last);
+            double now = clock.Elapsed.TotalSeconds;
+            double dt = now - last;
+            last = now;
+
+            float level;
+            int x, y;
+            bool zoomed;
+            bool smooth;
+            lock (_gate)
+            {
+                smooth = _smoothingWanted;
+                if (_gliding) Glide(dt);
+                else if (!_panning && !_view.Pinching && _view.IsSettled && _view.IsZoomed) FollowPointer();
+                _view.Step(dt);
+                level = (float)_view.Level;
+                x = (int)Math.Round(_view.X);
+                y = (int)Math.Round(_view.Y);
+                zoomed = _view.IsZoomed;
+                if (_holdCursor && (_panning || _gliding))
+                {
+                    SetCursorPos((int)Math.Round(_view.X + _cursorShownX / _view.Level), (int)Math.Round(_view.Y + _cursorShownY / _view.Level));
+                }
+                else
+                {
+                    _holdCursor = false;
+                }
+            }
+
+            if (setSmoothing != null && _smoothingApplied != smooth)
+            {
+                try { setSmoothing(smooth); } catch { }
+                _smoothingApplied = smooth;
+            }
+            if (level != appliedLevel || x != appliedX || y != appliedY)
+            {
+                if (!MagSetFullscreenTransform(level, x, y)) Log.Error($"Screen zoom failed (error {Marshal.GetLastWin32Error()})");
+                appliedLevel = level;
+                appliedX = x;
+                appliedY = y;
+            }
+            if (zoomed != _wasZoomed)
+            {
+                _wasZoomed = zoomed;
+                _dispatcher.BeginInvoke(() => ZoomedChanged?.Invoke(zoomed));
+            }
+        }
+
         try
         {
             MagSetFullscreenTransform(1, 0, 0);
@@ -242,6 +293,77 @@ public sealed class ScreenMagnifier : IDisposable
         catch
         {
         }
-        _initialized = false;
+    }
+
+    /// <summary>Waits for the next screen refresh, so every frame shows one zoom step.</summary>
+    private static void WaitForNextFrame(Stopwatch clock, double last)
+    {
+        bool waited = false;
+        try { waited = DwmFlush() == 0; } catch { }
+        double since = clock.Elapsed.TotalSeconds - last;
+        // DwmFlush can return at once (nothing else on screen changed); never spin faster than ~120 fps.
+        if (!waited || since < 0.004) Thread.Sleep(Math.Max(1, (int)((0.008 - since) * 1000)));
+    }
+
+    private static SetSmoothingProc? LoadSmoothingSwitch()
+    {
+        try
+        {
+            var module = LoadLibrary("Magnification.dll");
+            var proc = module == IntPtr.Zero ? IntPtr.Zero : GetProcAddress(module, "MagSetFullscreenUseBitmapSmoothing");
+            return proc == IntPtr.Zero ? null : Marshal.GetDelegateForFunctionPointer<SetSmoothingProc>(proc);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private void Glide(double dt)
+    {
+        // Slow down like Chrome's fling: about 8% speed lost per 1/60 s.
+        double decay = Math.Pow(0.92, dt * 60);
+        _glideVx *= decay;
+        _glideVy *= decay;
+        if (!_view.IsZoomed || Math.Abs(_glideVx) + Math.Abs(_glideVy) < 30)
+        {
+            _gliding = false;
+            return;
+        }
+        _view.PanBy(_glideVx * dt, _glideVy * dt);
+    }
+
+    /// <summary>While zoomed, glide the view along so the pointer never leaves the visible area.</summary>
+    private void FollowPointer()
+    {
+        var p = WindowInfo.CursorPosition();
+        double viewW = _view.ScreenWidth / _view.Level, viewH = _view.ScreenHeight / _view.Level;
+        double marginX = viewW * 0.08, marginY = viewH * 0.08;
+        double x = _view.X, y = _view.Y;
+        if (p.X < x + marginX) x = p.X - marginX;
+        else if (p.X > x + viewW - marginX) x = p.X - viewW + marginX;
+        if (p.Y < y + marginY) y = p.Y - marginY;
+        else if (p.Y > y + viewH - marginY) y = p.Y - viewH + marginY;
+        if (Math.Abs(x - _view.X) > 0.5 || Math.Abs(y - _view.Y) > 0.5) _view.PanTo(x, y);
+    }
+
+    private void UpdateScreenSize()
+    {
+        var bounds = System.Windows.Forms.Screen.PrimaryScreen?.Bounds ?? System.Windows.Forms.SystemInformation.VirtualScreen;
+        _view.ScreenWidth = bounds.Width;
+        _view.ScreenHeight = bounds.Height;
+    }
+
+    public void Dispose()
+    {
+        _stopping = true;
+        _wake.Set();
+        _thread?.Join(1000);
+        // Right away rather than through the dispatcher: the app is closing and must give back two-finger scrolling now.
+        if (_wasZoomed)
+        {
+            _wasZoomed = false;
+            ZoomedChanged?.Invoke(false);
+        }
     }
 }

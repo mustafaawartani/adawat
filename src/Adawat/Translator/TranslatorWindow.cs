@@ -32,9 +32,11 @@ public sealed class TranslatorWindow : FluentWindow
     private readonly Action _openSettings;
     private readonly Action _saveSettings;
 
-    private readonly ComboBox _sourceCombo = new() { Width = 136, MaxDropDownHeight = 420 };
-    private readonly ComboBox _targetCombo = new() { Width = 136, MaxDropDownHeight = 420 };
-    private readonly Wpf.Ui.Controls.TextBox _sourceBox;
+    private readonly LanguagePicker _sourcePicker = new();
+    private readonly LanguagePicker _targetPicker = new();
+    private readonly TextBox _sourceBox;
+    private readonly TextBlock _placeholder;
+    private readonly Border _sourceFrame;
     private readonly TextBox _resultBox;
     private readonly TextBox _secondBox;
     private readonly TextBlock _detected;
@@ -42,10 +44,12 @@ public sealed class TranslatorWindow : FluentWindow
     private readonly TextBlock _secondLabel;
     private readonly TextBlock _status;
     private readonly TextBlock _modeLabel;
+    private readonly TextBlock _googleLink;
+    private readonly DockPanel _footer;
     private readonly StackPanel _dictionaryPanel = new();
     private readonly Border _resultCard;
     private readonly Border _secondCard;
-    private readonly Wpf.Ui.Controls.Button _pinButton;
+    private readonly Border _pinButton;
     private readonly DispatcherTimer _typingTimer;
 
     private CancellationTokenSource? _cts;
@@ -54,6 +58,7 @@ public sealed class TranslatorWindow : FluentWindow
     private PopupMode _mode;
     private Native.POINT _anchor;
     private bool _pinned;
+    private bool _statusIsError;
     private bool _quiet; // suppresses change events while the window fills itself
     private IntPtr _hwnd;
 
@@ -71,7 +76,8 @@ public sealed class TranslatorWindow : FluentWindow
 
         Title = "Adawat Translator";
         Icon = AppIcon.ImageSource;
-        WindowBackdropType = WindowBackdropType.Acrylic;
+        // A plain, solid surface: calmer and easier to read than the see-through acrylic.
+        WindowBackdropType = WindowBackdropType.None;
         WindowCornerPreference = WindowCornerPreference.Round;
         ExtendsContentIntoTitleBar = true;
         ResizeMode = ResizeMode.NoResize;
@@ -83,40 +89,55 @@ public sealed class TranslatorWindow : FluentWindow
         Top = -10000;
         MaxHeight = 760;
         FontFamily = new FontFamily(Ui.FontFamilyName);
+        ApplyTheme();
+        SetResourceReference(BackgroundProperty, "Adawat.Surface");
 
         // ---- Header: languages and window buttons ---------------------------------
-        var swap = Ui.IconButton(SymbolRegular.ArrowSwap24, "Swap languages", Swap);
-        _pinButton = Ui.IconButton(SymbolRegular.Pin24, "Keep open", TogglePin);
-        var header = new DockPanel { LastChildFill = false, Margin = new Thickness(0, 0, 0, 10) };
+        var swap = PopupUi.IconButton(SymbolRegular.ArrowSwap20, "Swap languages", Swap);
+        swap.Margin = new Thickness(2, 0, 2, 0);
+        _pinButton = PopupUi.IconButton(SymbolRegular.Pin20, "Keep open", TogglePin);
+        var header = new DockPanel { LastChildFill = false, Margin = new Thickness(-6, 0, -4, 10), Background = Brushes.Transparent };
         var languages = new StackPanel { Orientation = Orientation.Horizontal };
-        languages.Children.Add(_sourceCombo);
+        languages.Children.Add(_sourcePicker);
         languages.Children.Add(swap);
-        languages.Children.Add(_targetCombo);
+        languages.Children.Add(_targetPicker);
         DockPanel.SetDock(languages, Dock.Left);
         header.Children.Add(languages);
-        var tools = new StackPanel { Orientation = Orientation.Horizontal };
+        var tools = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         tools.Children.Add(_pinButton);
-        tools.Children.Add(Ui.IconButton(SymbolRegular.Settings24, "Settings", () => { HideWindow(); _openSettings(); }));
-        tools.Children.Add(Ui.IconButton(SymbolRegular.Dismiss24, "Close (Esc)", HideWindow));
+        tools.Children.Add(PopupUi.IconButton(SymbolRegular.Settings20, "Settings", () => { HideWindow(); _openSettings(); }));
+        tools.Children.Add(PopupUi.IconButton(SymbolRegular.Dismiss20, "Close (Esc)", HideWindow));
         DockPanel.SetDock(tools, Dock.Right);
         header.Children.Add(tools);
         header.MouseLeftButtonDown += (_, e) =>
         {
-            if (e.OriginalSource is Grid or DockPanel or StackPanel) DragMove();
+            if (e.OriginalSource is DockPanel or StackPanel) DragMove();
         };
         foreach (UIElement child in new UIElement[] { languages, tools }) WindowChrome.SetIsHitTestVisibleInChrome(child, true);
 
         // ---- Source text -------------------------------------------------------------
-        _sourceBox = new Wpf.Ui.Controls.TextBox
+        _sourceBox = PopupUi.PlainTextBox(T.FontSize, readOnly: false);
+        _sourceBox.AcceptsReturn = true;
+        _sourceBox.MinHeight = 24;
+        _sourceBox.MaxHeight = 160;
+        _placeholder = PopupUi.Text("Type or paste text, then press Enter", T.FontSize, "Faint");
+        _placeholder.IsHitTestVisible = false;
+        var sourceField = new Grid();
+        sourceField.Children.Add(_placeholder);
+        sourceField.Children.Add(_sourceBox);
+        _sourceFrame = new Border
         {
-            PlaceholderText = "Type or paste text, then press Enter",
-            AcceptsReturn = true,
-            TextWrapping = TextWrapping.Wrap,
-            MinHeight = 44,
-            MaxHeight = 160,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            ClearButtonEnabled = false,
+            CornerRadius = new CornerRadius(12),
+            BorderThickness = new Thickness(1),
+            Padding = new Thickness(14, 11, 14, 11),
+            Child = sourceField,
+            Cursor = Cursors.IBeam,
         };
+        _sourceFrame.SetResourceReference(Border.BorderBrushProperty, "Adawat.Border");
+        _sourceFrame.MouseLeftButtonDown += (_, _) => _sourceBox.Focus();
+        _sourceBox.GotKeyboardFocus += (_, _) => _sourceFrame.SetResourceReference(Border.BorderBrushProperty, "Adawat.Accent");
+        _sourceBox.LostKeyboardFocus += (_, _) => _sourceFrame.SetResourceReference(Border.BorderBrushProperty, "Adawat.Border");
+
         _sourceBox.PreviewKeyDown += (_, e) =>
         {
             if (e.Key == Key.Enter && Keyboard.Modifiers == ModifierKeys.None)
@@ -128,80 +149,81 @@ public sealed class TranslatorWindow : FluentWindow
         };
         _sourceBox.TextChanged += (_, _) =>
         {
+            _placeholder.Visibility = _sourceBox.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
             if (_quiet) return;
             UpdateSourceDirection();
             _typingTimer!.Stop();
             _typingTimer.Start();
         };
 
-        _detected = Ui.Text("", 12, secondary: true);
+        _detected = PopupUi.Text("", 12, "Muted");
         _detected.VerticalAlignment = VerticalAlignment.Center;
-        _detected.Margin = new Thickness(4, 0, 0, 0);
-        _modeLabel = Ui.Text("", 12, secondary: true);
-        _modeLabel.Margin = new Thickness(2, 0, 0, 6);
+        _detected.TextWrapping = TextWrapping.NoWrap;
+        _detected.TextTrimming = TextTrimming.CharacterEllipsis;
+        _detected.Margin = new Thickness(6, 0, 8, 0);
+        _modeLabel = PopupUi.Text("", 12, "Muted");
+        _modeLabel.Margin = new Thickness(2, 0, 0, 8);
         _modeLabel.Visibility = Visibility.Collapsed;
 
-        var sourceTools = new DockPanel { Margin = new Thickness(0, 4, 0, 8) };
+        var sourceTools = new DockPanel { Margin = new Thickness(-2, 8, 0, 12) };
         var sourceLeft = new StackPanel { Orientation = Orientation.Horizontal };
-        sourceLeft.Children.Add(Ui.IconButton(SymbolRegular.Speaker224, "Listen", () => Speak(_sourceBox.Text, SourceLanguageForSpeech())));
-        sourceLeft.Children.Add(Ui.IconButton(SymbolRegular.Copy24, "Copy text", () => Copy(_sourceBox.Text)));
+        sourceLeft.Children.Add(PopupUi.IconButton(SymbolRegular.Speaker220, "Listen", () => Speak(_sourceBox.Text, SourceLanguageForSpeech())));
+        sourceLeft.Children.Add(PopupUi.IconButton(SymbolRegular.Copy20, "Copy text", () => Copy(_sourceBox.Text)));
         sourceLeft.Children.Add(_detected);
-        var translateButton = Ui.Button("Translate", () => _ = TranslateAsync(), primary: true);
-        translateButton.Padding = new Thickness(12, 4, 12, 5);
+        var translateButton = PopupUi.PillButton("Translate", () => _ = TranslateAsync());
         DockPanel.SetDock(translateButton, Dock.Right);
         sourceTools.Children.Add(translateButton);
         sourceTools.Children.Add(sourceLeft);
 
         // ---- Result -------------------------------------------------------------------
-        _resultBox = Ui.SelectableText(T.FontSize + 2);
+        _resultBox = PopupUi.PlainTextBox(T.FontSize + 2, readOnly: true);
         _resultBox.MaxHeight = 320;
-        _translit = Ui.Text("", 12, secondary: true);
-        _translit.Margin = new Thickness(0, 4, 0, 0);
-        var resultTools = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(-6, 6, 0, -4) };
-        resultTools.Children.Add(Ui.IconButton(SymbolRegular.Speaker224, "Listen", () => Speak(_resultBox.Text, _last?.TargetLanguage ?? SelectedCode(_targetCombo))));
-        resultTools.Children.Add(Ui.IconButton(SymbolRegular.Copy24, "Copy translation", () => Copy(_resultBox.Text)));
+        _translit = PopupUi.Text("", 12, "Muted");
+        _translit.FontStyle = FontStyles.Italic;
+        _translit.Margin = new Thickness(0, 6, 0, 0);
+        var resultTools = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(-8, 8, 0, -6) };
+        resultTools.Children.Add(PopupUi.IconButton(SymbolRegular.Speaker220, "Listen", () => Speak(_resultBox.Text, _last?.TargetLanguage ?? _targetPicker.Code)));
+        resultTools.Children.Add(PopupUi.IconButton(SymbolRegular.Copy20, "Copy translation", () => Copy(_resultBox.Text)));
         var resultStack = new StackPanel();
         resultStack.Children.Add(_resultBox);
         resultStack.Children.Add(_translit);
         resultStack.Children.Add(resultTools);
-        _resultCard = Card(resultStack);
+        _resultCard = PopupUi.Card(resultStack, new Thickness(14, 12, 14, 10));
 
         // ---- Second language -----------------------------------------------------------
-        _secondLabel = Ui.Text("", 12, secondary: true);
-        _secondBox = Ui.SelectableText(T.FontSize);
+        _secondLabel = PopupUi.Text("", 11, "Muted", FontWeights.SemiBold);
+        _secondLabel.Margin = new Thickness(0, 0, 0, 4);
+        _secondBox = PopupUi.PlainTextBox(T.FontSize, readOnly: true);
         _secondBox.MaxHeight = 200;
         var secondStack = new StackPanel();
         secondStack.Children.Add(_secondLabel);
         secondStack.Children.Add(_secondBox);
-        _secondCard = Card(secondStack);
+        _secondCard = PopupUi.Card(secondStack, new Thickness(14, 10, 14, 12));
         _secondCard.Margin = new Thickness(0, 8, 0, 0);
         _secondCard.Visibility = Visibility.Collapsed;
 
-        _dictionaryPanel.Margin = new Thickness(2, 10, 2, 0);
+        _dictionaryPanel.Margin = new Thickness(4, 12, 4, 0);
 
         // ---- Footer ---------------------------------------------------------------------
-        _status = Ui.Text("", 12, secondary: true);
+        _status = PopupUi.Text("", 12, "Muted");
         _status.VerticalAlignment = VerticalAlignment.Center;
         _status.TextTrimming = TextTrimming.CharacterEllipsis;
         _status.TextWrapping = TextWrapping.NoWrap;
-        var link = new Hyperlink(new Run("Open in Google Translate"));
-        link.Click += (_, _) => OpenInGoogle();
-        link.SetResourceReference(TextElement.ForegroundProperty, "AccentTextFillColorPrimaryBrush");
-        var linkBlock = new TextBlock(link) { FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
-        var footer = new DockPanel { Margin = new Thickness(2, 10, 2, 0) };
-        DockPanel.SetDock(linkBlock, Dock.Right);
-        footer.Children.Add(linkBlock);
-        footer.Children.Add(_status);
+        _googleLink = PopupUi.Link("Open in Google Translate", OpenInGoogle);
+        _footer = new DockPanel { Margin = new Thickness(4, 12, 4, 0) };
+        DockPanel.SetDock(_googleLink, Dock.Right);
+        _footer.Children.Add(_googleLink);
+        _footer.Children.Add(_status);
 
-        var root = new StackPanel { Margin = new Thickness(14, 12, 14, 12) };
+        var root = new StackPanel { Margin = new Thickness(16, 12, 16, 14) };
         root.Children.Add(header);
         root.Children.Add(_modeLabel);
-        root.Children.Add(_sourceBox);
+        root.Children.Add(_sourceFrame);
         root.Children.Add(sourceTools);
         root.Children.Add(_resultCard);
         root.Children.Add(_secondCard);
         root.Children.Add(_dictionaryPanel);
-        root.Children.Add(footer);
+        root.Children.Add(_footer);
         Content = root;
 
         _typingTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(750) };
@@ -211,14 +233,20 @@ public sealed class TranslatorWindow : FluentWindow
             _ = TranslateAsync();
         };
 
-        _sourceCombo.SelectionChanged += (_, _) => OnLanguageChanged();
-        _targetCombo.SelectionChanged += (_, _) => OnLanguageChanged();
+        _sourcePicker.Changed += OnLanguageChanged;
+        _targetPicker.Changed += OnLanguageChanged;
 
         PreviewKeyDown += (_, e) =>
         {
-            if (e.Key == Key.Escape)
+            if (e.Key != Key.Escape) return;
+            e.Handled = true;
+            if (_sourcePicker.IsOpen || _targetPicker.IsOpen)
             {
-                e.Handled = true;
+                _sourcePicker.Close();
+                _targetPicker.Close();
+            }
+            else
+            {
                 HideWindow();
             }
         };
@@ -233,21 +261,28 @@ public sealed class TranslatorWindow : FluentWindow
             HideWindow();
         };
         SizeChanged += (_, _) => KeepOnScreen();
-        SourceInitialized += (_, _) => _hwnd = new WindowInteropHelper(this).Handle;
+        SourceInitialized += (_, _) =>
+        {
+            _hwnd = new WindowInteropHelper(this).Handle;
+            ApplyBorderColor();
+        };
+        ThemeHelper.Changed += () =>
+        {
+            ApplyTheme();
+            ApplyBorderColor();
+            if (_statusIsError) SetStatus(_status.Text, error: true);
+        };
     }
 
-    private static Border Card(UIElement child)
+    private void ApplyTheme() => ThemeHelper.ApplyPalette(Resources);
+
+    /// <summary>Windows 11 draws a thin border around the window; give it the palette's border color.</summary>
+    private void ApplyBorderColor()
     {
-        var border = new Border
-        {
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(12, 10, 12, 8),
-            BorderThickness = new Thickness(1),
-            Child = child,
-        };
-        border.SetResourceReference(Border.BackgroundProperty, "CardBackgroundFillColorDefaultBrush");
-        border.SetResourceReference(Border.BorderBrushProperty, "CardStrokeColorDefaultBrush");
-        return border;
+        if (_hwnd == IntPtr.Zero) return;
+        var c = ThemeHelper.PaletteColor("Border");
+        int colorRef = c.R | (c.G << 8) | (c.B << 16);
+        Native.DwmSetWindowAttribute(_hwnd, Native.DWMWA_BORDER_COLOR, ref colorRef, sizeof(int));
     }
 
     // ---- Opening -----------------------------------------------------------------------
@@ -264,9 +299,11 @@ public sealed class TranslatorWindow : FluentWindow
 
         Width = Math.Clamp(T.PopupWidth, 440, 900);
         _sourceBox.FontSize = T.FontSize;
+        _placeholder.FontSize = T.FontSize;
         _resultBox.FontSize = T.FontSize + 2;
         _secondBox.FontSize = T.FontSize;
-        FillLanguageCombos();
+        _googleLink.Visibility = T.ShowOpenInGoogle ? Visibility.Visible : Visibility.Collapsed;
+        FillLanguagePickers();
 
         _quiet = true;
         _sourceBox.Text = text ?? "";
@@ -350,78 +387,51 @@ public sealed class TranslatorWindow : FluentWindow
     private void TogglePin()
     {
         _pinned = !_pinned;
-        _pinButton.Icon = Ui.Icon(_pinned ? SymbolRegular.PinOff24 : SymbolRegular.Pin24);
+        PopupUi.SetActive(_pinButton, _pinned);
         _pinButton.ToolTip = _pinned ? "Stop keeping open" : "Keep open";
     }
 
     // ---- Languages ---------------------------------------------------------------------
 
-    private void FillLanguageCombos()
+    private void FillLanguagePickers()
     {
-        _quiet = true;
-        try
-        {
-            var ordered = Languages.Ordered(T.FavoriteLanguages);
-            _sourceCombo.Items.Clear();
-            _sourceCombo.Items.Add(new ComboBoxItem { Content = "Detect language", Tag = Languages.Auto });
-            foreach (var l in ordered) _sourceCombo.Items.Add(new ComboBoxItem { Content = l.Name, Tag = l.Code });
-            _targetCombo.Items.Clear();
-            foreach (var l in ordered) _targetCombo.Items.Add(new ComboBoxItem { Content = l.Name, Tag = l.Code });
-            Select(_sourceCombo, T.SourceLanguage);
-            Select(_targetCombo, T.TargetLanguage);
-        }
-        finally
-        {
-            _quiet = false;
-        }
+        var ordered = Languages.Ordered(T.FavoriteLanguages).Select(l => (l.Code, l.Name)).ToList();
+        _sourcePicker.SetLanguages(new[] { (Languages.Auto, "Detect language") }.Concat(ordered));
+        _targetPicker.SetLanguages(ordered);
+        _sourcePicker.Select(T.SourceLanguage);
+        _targetPicker.Select(T.TargetLanguage);
     }
-
-    private static void Select(ComboBox combo, string code)
-    {
-        foreach (ComboBoxItem item in combo.Items)
-        {
-            if (Languages.Same(item.Tag as string, code))
-            {
-                combo.SelectedItem = item;
-                return;
-            }
-        }
-        if (combo.Items.Count > 0) combo.SelectedIndex = 0;
-    }
-
-    private static string SelectedCode(ComboBox combo) => (combo.SelectedItem as ComboBoxItem)?.Tag as string ?? Languages.Auto;
 
     private void OnLanguageChanged()
     {
-        if (_quiet) return;
-        T.SourceLanguage = SelectedCode(_sourceCombo);
-        T.TargetLanguage = SelectedCode(_targetCombo);
+        T.SourceLanguage = _sourcePicker.Code;
+        T.TargetLanguage = _targetPicker.Code;
         _saveSettings();
         if (!string.IsNullOrWhiteSpace(_sourceBox.Text)) _ = TranslateAsync();
     }
 
     private void Swap()
     {
-        var source = SelectedCode(_sourceCombo);
-        var target = SelectedCode(_targetCombo);
+        var source = _sourcePicker.Code;
+        var target = _targetPicker.Code;
         var newTarget = source == Languages.Auto ? (_last?.SourceLanguage is { Length: > 0 } s ? s : "en") : source;
 
         _quiet = true;
         if (!string.IsNullOrWhiteSpace(_resultBox.Text)) _sourceBox.Text = _resultBox.Text;
-        Select(_sourceCombo, target);
-        Select(_targetCombo, newTarget);
+        _sourcePicker.Select(target);
+        _targetPicker.Select(newTarget);
         _quiet = false;
         UpdateSourceDirection();
 
-        T.SourceLanguage = SelectedCode(_sourceCombo);
-        T.TargetLanguage = SelectedCode(_targetCombo);
+        T.SourceLanguage = _sourcePicker.Code;
+        T.TargetLanguage = _targetPicker.Code;
         _saveSettings();
         _ = TranslateAsync();
     }
 
     private string SourceLanguageForSpeech()
     {
-        var code = SelectedCode(_sourceCombo);
+        var code = _sourcePicker.Code;
         return code == Languages.Auto ? (_last?.SourceLanguage is { Length: > 0 } s ? s : "en") : code;
     }
 
@@ -438,8 +448,8 @@ public sealed class TranslatorWindow : FluentWindow
         }
 
         var cts = _cts = new CancellationTokenSource();
-        var source = SelectedCode(_sourceCombo);
-        var target = SelectedCode(_targetCombo);
+        var source = _sourcePicker.Code;
+        var target = _targetPicker.Code;
         SetStatus("Translating…");
 
         try
@@ -467,7 +477,7 @@ public sealed class TranslatorWindow : FluentWindow
             {
                 var extra = await _translator.TranslateAsync(text, source, second, cts.Token);
                 if (cts.IsCancellationRequested) return;
-                _secondLabel.Text = Languages.NameOf(second);
+                _secondLabel.Text = Languages.NameOf(second).ToUpperInvariant();
                 _secondBox.Text = extra.Translation;
                 _secondBox.FlowDirection = Languages.IsRightToLeft(second) ? FlowDirection.RightToLeft : FlowDirection.LeftToRight;
                 _secondCard.Visibility = Visibility.Visible;
@@ -500,7 +510,7 @@ public sealed class TranslatorWindow : FluentWindow
 
         if (usedFallback)
             _detected.Text = $"Already {Languages.NameOf(requestedTarget)}: showing {Languages.NameOf(result.TargetLanguage)}";
-        else if (SelectedCode(_sourceCombo) == Languages.Auto && !string.IsNullOrEmpty(result.SourceLanguage))
+        else if (_sourcePicker.Code == Languages.Auto && !string.IsNullOrEmpty(result.SourceLanguage))
             _detected.Text = $"Detected: {Languages.NameOf(result.SourceLanguage)}";
         else
             _detected.Text = "";
@@ -514,12 +524,12 @@ public sealed class TranslatorWindow : FluentWindow
         {
             foreach (var entry in result.Dictionary.Take(5))
             {
-                var line = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 13, Margin = new Thickness(0, 0, 0, 4) };
-                line.SetResourceReference(TextBlock.ForegroundProperty, "TextFillColorSecondaryBrush");
+                var line = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 13, Margin = new Thickness(0, 0, 0, 6) };
+                line.SetResourceReference(TextBlock.ForegroundProperty, "Adawat.Text");
                 if (!string.IsNullOrEmpty(entry.PartOfSpeech))
                 {
-                    var pos = new Run(entry.PartOfSpeech + "  ") { FontWeight = FontWeights.SemiBold };
-                    pos.SetResourceReference(TextElement.ForegroundProperty, "TextFillColorPrimaryBrush");
+                    var pos = new Run(entry.PartOfSpeech + "   ") { FontWeight = FontWeights.SemiBold, FontSize = 12 };
+                    pos.SetResourceReference(TextElement.ForegroundProperty, "Adawat.Accent");
                     line.Inlines.Add(pos);
                 }
                 line.Inlines.Add(new Run(string.Join(", ", entry.Terms.Take(8))));
@@ -567,8 +577,10 @@ public sealed class TranslatorWindow : FluentWindow
     {
         _status.Text = text;
         _status.ToolTip = string.IsNullOrEmpty(text) ? null : text;
+        _statusIsError = error;
         if (error) _status.Foreground = new SolidColorBrush(ThemeHelper.IsDark ? Color.FromRgb(0xFF, 0x99, 0xA4) : Color.FromRgb(0xC4, 0x2B, 0x1C));
-        else _status.SetResourceReference(TextBlock.ForegroundProperty, "TextFillColorSecondaryBrush");
+        else _status.SetResourceReference(TextBlock.ForegroundProperty, "Adawat.Muted");
+        _footer.Visibility = text.Length > 0 || T.ShowOpenInGoogle ? Visibility.Visible : Visibility.Collapsed;
     }
 
     // ---- Actions -----------------------------------------------------------------------
@@ -599,8 +611,8 @@ public sealed class TranslatorWindow : FluentWindow
 
     private void OpenInGoogle()
     {
-        var url = "https://translate.google.com/?sl=" + Uri.EscapeDataString(SelectedCode(_sourceCombo))
-                  + "&tl=" + Uri.EscapeDataString(SelectedCode(_targetCombo))
+        var url = "https://translate.google.com/?sl=" + Uri.EscapeDataString(_sourcePicker.Code)
+                  + "&tl=" + Uri.EscapeDataString(_targetPicker.Code)
                   + "&text=" + Uri.EscapeDataString(_sourceBox.Text.Length > 4000 ? _sourceBox.Text[..4000] : _sourceBox.Text)
                   + "&op=translate";
         try

@@ -32,6 +32,7 @@
 
   <ItemGroup>
     <EmbeddedResource Include="Assets\adawat.ico" LogicalName="Adawat.ico" />
+    <EmbeddedResource Include="Assets\translate-button.png" LogicalName="Adawat.TranslateButton.png" />
   </ItemGroup>
 
   <ItemGroup>

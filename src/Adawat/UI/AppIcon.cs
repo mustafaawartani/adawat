@@ -9,6 +9,7 @@ namespace Adawat.UI;
 public static class AppIcon
 {
     private static ImageSource? _image;
+    private static ImageSource? _translateButton;
 
     private static Stream Open() =>
         typeof(AppIcon).Assembly.GetManifestResourceStream("Adawat.ico")
@@ -28,6 +29,20 @@ public static class AppIcon
             }
             best.Freeze();
             return _image = best;
+        }
+    }
+
+    /// <summary>The glass badge of the translate button that appears next to selected text.</summary>
+    public static ImageSource TranslateButton
+    {
+        get
+        {
+            if (_translateButton != null) return _translateButton;
+            using var stream = typeof(AppIcon).Assembly.GetManifestResourceStream("Adawat.TranslateButton.png")
+                               ?? throw new InvalidOperationException("Translate button resource missing");
+            var image = BitmapFrame.Create(stream, BitmapCreateOptions.None, BitmapCacheOption.OnLoad);
+            image.Freeze();
+            return _translateButton = image;
         }
     }
 

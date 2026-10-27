@@ -6,6 +6,7 @@ using System.Windows;
 using System.Windows.Threading;
 using Adawat.Core;
 using Adawat.Gestures;
+using Adawat.ImageZoom;
 using Adawat.Ocr;
 using Adawat.Translator;
 using Adawat.UI;
@@ -27,6 +28,7 @@ public sealed class App : Application, IAppHost
     private TranslatorService _translator = null!;
     private OcrTool _ocr = null!;
     private GestureService _gestures = null!;
+    private ImageZoomService _imageZoom = null!;
     private TrayIcon _tray = null!;
     private TranslatorWindow? _popup;
     private SettingsWindow? _settingsWindow;
@@ -66,9 +68,13 @@ public sealed class App : Application, IAppHost
         System.Windows.Forms.Application.EnableVisualStyles();
 
         Settings = SettingsStore.Load();
+        // WPF makes the first window created the MainWindow, and WPF UI repaints the MainWindow
+        // with a Mica background whenever the theme is applied. Without this hidden placeholder,
+        // that would be the translate button or the swipe arrow, which then get a gray square.
+        MainWindow = new Window { ShowInTaskbar = false, Title = "Adawat" };
         Resources.MergedDictionaries.Add(new ThemesDictionary { Theme = ApplicationTheme.Light });
         Resources.MergedDictionaries.Add(new ControlsDictionary());
-        ThemeHelper.Initialize(Settings.Theme);
+        ThemeHelper.Initialize(Settings.Theme, Settings.Accent);
 
         _messages = new MessageWindow();
         Hotkeys = new HotkeyManager(_messages);
@@ -78,6 +84,7 @@ public sealed class App : Application, IAppHost
         _translator = new TranslatorService(Settings, () => Popup);
         _ocr = new OcrTool(Settings, _translator);
         _gestures = new GestureService(Settings, _messages);
+        _imageZoom = new ImageZoomService(Settings, Hotkeys);
         _mouseHook = new MouseHook();
         _mouseHook.MouseEvent += OnMouse;
         _mouseHook.BlockWheel = _gestures.ShouldBlockWheel;
@@ -137,6 +144,7 @@ public sealed class App : Application, IAppHost
         // Runs on the hook thread.
         if (e.Kind == MouseEventKind.Wheel) _gestures.NotifyNativeWheel();
         if (_translator.WantsMouseHook) _translator.OnMouse(e);
+        if (Settings.ImageZoom.Enabled) _imageZoom.OnMouse(e.Kind);
     }
 
     // ---- Settings ------------------------------------------------------------------------------
@@ -159,6 +167,7 @@ public sealed class App : Application, IAppHost
         Hotkeys.Set("ocr", o.Enabled ? o.Hotkey : null, () => Dispatcher.BeginInvoke(_ocr.CaptureScreen));
 
         bool needHook = _translator.WantsMouseHook
+                        || Settings.ImageZoom.Enabled // closes the picture preview on scroll
                         || (g.Enabled && g.PinchEnabled && g.PinchAction == PinchAction.ScreenZoom) // blocks app scrolling while zoomed
                         || (g.Enabled && g.PinchEnabled && g.SkipNativePinchApps);
         if (needHook) _mouseHook.Start();
@@ -166,6 +175,7 @@ public sealed class App : Application, IAppHost
         if (!_translator.WantsMouseHook) _translator.HideIcon();
 
         _gestures.Apply();
+        _imageZoom.Apply();
         StartupManager.ApplyRunKey(Settings);
         if (Settings.RunElevated && _appliedStartWithWindows != null && _appliedStartWithWindows != Settings.StartWithWindows)
         {
@@ -215,8 +225,6 @@ public sealed class App : Application, IAppHost
     }
 
     public void ShowHistoryEntry(HistoryEntry entry) => Popup.ShowHistoryEntry(entry);
-
-    public bool? WindowsPinchOffApplied => _gestures.WindowsPinchOffApplied;
 
     public void ResetZoom() => _gestures.ResetZoom();
 
@@ -278,6 +286,7 @@ public sealed class App : Application, IAppHost
             _mouseHook.Dispose();
             Hotkeys.Dispose();
             _gestures.Dispose();
+            _imageZoom.Dispose();
             _translator.Dispose();
             _speech.Dispose();
             _tray.Dispose();

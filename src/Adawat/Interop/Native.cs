@@ -200,7 +200,7 @@ public static class Native
     public static extern int SHQueryUserNotificationState(out int state);
 
     // ---- DWM ----------------------------------------------------------------
-    public const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
+    public const int DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWA_BORDER_COLOR = 34;
     public const int DWMWCP_ROUND = 2, DWMWCP_ROUNDSMALL = 3;
 
     [DllImport("dwmapi.dll")]

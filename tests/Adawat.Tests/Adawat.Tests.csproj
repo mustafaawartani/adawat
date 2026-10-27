@@ -10,6 +10,8 @@
 
   <ItemGroup>
     <Compile Include="..\..\src\Adawat\Gestures\GestureEngine.cs" Link="Shared\GestureEngine.cs" />
+    <Compile Include="..\..\src\Adawat\Gestures\ZoomView.cs" Link="Shared\ZoomView.cs" />
+    <Compile Include="..\..\src\Adawat\ImageZoom\ImageZoomLogic.cs" Link="Shared\ImageZoomLogic.cs" />
     <Compile Include="..\..\src\Adawat\Core\Hotkey.cs" Link="Shared\Hotkey.cs" />
     <Compile Include="..\..\src\Adawat\Translator\Languages.cs" Link="Shared\Languages.cs" />
     <Compile Include="..\..\src\Adawat\Translator\GoogleTranslator.cs" Link="Shared\GoogleTranslator.cs" />

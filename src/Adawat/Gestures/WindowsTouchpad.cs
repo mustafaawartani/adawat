@@ -130,6 +130,29 @@ public static class WindowsTouchpad
     }
 
     /// <summary>
+    /// Pinch to zoom as the user set it in Windows Settings (saved in the registry), or null if
+    /// Windows never saved it. Adawat's own short pauses are not saved, so this is always the user's choice.
+    /// </summary>
+    public static bool? SavedPinchZoom()
+    {
+        try
+        {
+            var value = Registry.GetValue($@"HKEY_CURRENT_USER\{RegistryKey}", "ZoomEnabled", null);
+            if (value is int i) return i != 0;
+        }
+        catch
+        {
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Turns Windows' pinch zoom on or off for now without saving it: the Windows setting keeps the
+    /// user's choice, and signing in again always brings that back. Returns false if not possible.
+    /// </summary>
+    public static bool SetPinchZoomForNow(bool enabled) => SetFlag(ZoomBit, enabled, persist: false);
+
+    /// <summary>
     /// Pauses or resumes Windows' two-finger scrolling without saving it (a restart always brings
     /// it back). Used while the screen is zoomed, so two fingers move the zoom and not the app.
     /// Returns false if this Windows does not allow it.

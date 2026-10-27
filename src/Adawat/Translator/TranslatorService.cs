@@ -27,6 +27,7 @@ public sealed class TranslatorService : IDisposable
     private int _lastClickX, _lastClickY;
     private int _clickCount;
     private IntPtr _iconOwner;
+    private DispatcherTimer? _selectionWatch;
 
     public TranslatorService(AppSettings settings, Func<TranslatorWindow> window)
     {
@@ -158,7 +159,8 @@ public sealed class TranslatorService : IDisposable
             else
             {
                 _iconOwner = foreground;
-                Icon.ShowAt(point, T.IconSeconds);
+                Icon.ShowAt(point, T.KeepIconWhileSelected ? null : T.IconSeconds);
+                if (T.KeepIconWhileSelected) WatchSelection();
             }
         });
     }
@@ -179,6 +181,47 @@ public sealed class TranslatorService : IDisposable
         }
     }
 
+    /// <summary>
+    /// While the button waits next to a selection, watch for what clears a selection that the mouse
+    /// hook cannot see: typing (Ctrl shortcuts such as Ctrl+C keep it) and switching to another app.
+    /// Clicks elsewhere and scrolling are handled in <see cref="OnMouse"/>.
+    /// </summary>
+    private void WatchSelection()
+    {
+        if (_selectionWatch == null)
+        {
+            _selectionWatch = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
+            _selectionWatch.Tick += (_, _) =>
+            {
+                if (_icon == null || !_icon.IsShown)
+                {
+                    _selectionWatch.Stop();
+                    return;
+                }
+                var foreground = Native.GetForegroundWindow();
+                bool otherApp = foreground != _iconOwner && !WindowInfo.IsOwnWindow(foreground);
+                if (otherApp || !Native.IsWindow(_iconOwner) || TypingKeyDown())
+                {
+                    _selectionWatch.Stop();
+                    _icon.HideIcon();
+                }
+            };
+        }
+        _selectionWatch.Stop();
+        _selectionWatch.Start();
+    }
+
+    private static bool TypingKeyDown()
+    {
+        if (InputSender.IsDown(InputSender.VK_CONTROL)) return false; // Ctrl+C, Ctrl+A… keep the selection
+        for (int vk = 0x08; vk <= 0xFE; vk++)
+        {
+            bool modifier = vk is >= 0x10 and <= 0x12 or >= 0xA0 and <= 0xA5 or 0x5B or 0x5C or 0x14 or 0x90 or 0x91;
+            if (!modifier && (Native.GetAsyncKeyState(vk) & 0x8000) != 0) return true;
+        }
+        return false;
+    }
+
     private bool ModifierSatisfied() => T.SelectionModifier switch
     {
         SelectionModifier.Alt => InputSender.IsDown(InputSender.VK_MENU),
@@ -191,6 +234,7 @@ public sealed class TranslatorService : IDisposable
 
     public void Dispose()
     {
+        _selectionWatch?.Stop();
         _icon?.Close();
     }
 }

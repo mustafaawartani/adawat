@@ -112,3 +112,31 @@ public class ZoomViewTests
         Assert.Equal(0, view.Y, 6);
     }
 }
+
+public class ZoomScrollTests
+{
+    [Fact]
+    public void PanPastTheEdgeReturnsTheRest()
+    {
+        var view = new Adawat.Gestures.ZoomView { ScreenWidth = 1000, ScreenHeight = 800 };
+        view.ZoomTo(2); // the view is 500 x 400 and can move to y = 400 at most
+        var (x, y) = view.PanBy(0, 350);
+        Assert.Equal(0, x, 3);
+        Assert.Equal(0, y, 3);
+        (x, y) = view.PanBy(0, 100);
+        Assert.Equal(50, y, 3);         // 50 more than fits: that part scrolls the page
+        Assert.Equal(400, view.TargetY, 3);
+        (_, y) = view.PanBy(0, -30);    // back up: the view moves first, nothing scrolls
+        Assert.Equal(0, y, 3);
+    }
+
+    [Fact]
+    public void ZoomSpeedRangeIsWiderAndSlowerThanBefore()
+    {
+        Assert.True(Adawat.Gestures.ZoomView.GainForSpeed(1) < 0.35);   // old slowest was 0.82
+        Assert.True(Adawat.Gestures.ZoomView.GainForSpeed(100) > 2.4);
+        Assert.True(Adawat.Gestures.ZoomView.GainForSpeed(30) < Adawat.Gestures.ZoomView.GainForSpeed(50));
+        foreach (var speed in new[] { 1, 30, 50, 77, 100 })
+            Assert.Equal(speed, Adawat.Gestures.ZoomView.SpeedForGain(Adawat.Gestures.ZoomView.GainForSpeed(speed)));
+    }
+}

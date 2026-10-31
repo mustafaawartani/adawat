@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 
 namespace Adawat.ImageZoom;
 
@@ -39,6 +40,137 @@ public static class ImageZoomLogic
         // CDNs often put the format in the query: ?format=jpg, &fm=webp
         var query = uri.Query.ToLowerInvariant();
         return new[] { "format=jpg", "format=jpeg", "format=png", "format=webp", "fm=jpg", "fm=png", "fm=webp" }.Any(query.Contains);
+    }
+
+    /// <summary>The address of a picture element itself (its src): any web or data address counts, with or without an extension.</summary>
+    public static bool IsPictureSource(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return false;
+        if (url.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase)) return true;
+        return Uri.TryCreate(url, UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+    }
+
+    /// <summary>Picture servers whose addresses often have no extension (YouTube, Google, Twitter…).</summary>
+    public static bool IsPictureHost(string? url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return false;
+        var host = uri.Host.ToLowerInvariant();
+        return host.EndsWith("ggpht.com") || host.EndsWith("googleusercontent.com") || host.EndsWith("ytimg.com")
+               || host == "pbs.twimg.com" || host == "i.redd.it" || host == "preview.redd.it" || host == "i.imgur.com"
+               || host == "upload.wikimedia.org" || host.EndsWith("pinimg.com") || host.EndsWith("media-amazon.com");
+    }
+
+    private static readonly Regex GoogleSize = new(@"=([swhc][0-9]+[^/=?#]*)$", RegexOptions.IgnoreCase);
+    private static readonly Regex GoogleSizeSegment = new(@"/s[0-9]+(-[a-z0-9-]+)?/", RegexOptions.IgnoreCase);
+    private static readonly Regex YouTubeThumb = new(@"^/vi(_webp)?/([^/]+)/[^/]+\.(jpg|webp)$", RegexOptions.IgnoreCase);
+    private static readonly Regex TwitterProfile = new(@"_(normal|bigger|mini|200x200|400x400)(\.[a-z]+)$", RegexOptions.IgnoreCase);
+    private static readonly Regex WikimediaThumb = new(@"^(/wikipedia/[^/]+)/thumb(/[0-9a-f]/[0-9a-f]{2}/[^/]+)/[^/]+$", RegexOptions.IgnoreCase);
+    private static readonly Regex AmazonSize = new(@"\._[^/]+_(\.[a-z]+)$", RegexOptions.IgnoreCase);
+    private static readonly Regex ImgurSuffix = new(@"^/([a-zA-Z0-9]{7})[sbtmlh](\.[a-z]+)$");
+    private static readonly Regex WordPressSize = new(@"-[0-9]{2,4}x[0-9]{2,4}(\.[a-z]+)$", RegexOptions.IgnoreCase);
+    private static readonly string[] SizeQueryKeys = { "w", "h", "width", "height", "size", "resize", "fit", "crop", "quality", "q", "dpr", "imwidth" };
+
+    /// <summary>
+    /// Pages show small versions of pictures. These are addresses to try for the full-size picture,
+    /// best first, always ending with the address itself: YouTube and Google profile pictures and
+    /// thumbnails, Twitter/X, Wikipedia, Reddit, Imgur, Amazon, Pinterest, WordPress and image CDNs
+    /// that take the size in the query.
+    /// </summary>
+    public static IReadOnlyList<string> FullSizeCandidates(string url)
+    {
+        var list = new List<string>();
+        void Add(string candidate)
+        {
+            if (!string.IsNullOrEmpty(candidate) && !list.Contains(candidate)) list.Add(candidate);
+        }
+
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        {
+            Add(url);
+            return list;
+        }
+        var host = uri.Host.ToLowerInvariant();
+        var path = uri.AbsolutePath;
+        string Origin() => uri.GetLeftPart(UriPartial.Authority);
+
+        if (host.EndsWith("ggpht.com") || host.EndsWith("googleusercontent.com"))
+        {
+            // https://yt3.ggpht.com/abc=s88-c-k-c0x00ffffff-no-rj  ->  =s0 is the picture as uploaded
+            var full = uri.GetLeftPart(UriPartial.Path);
+            if (GoogleSize.IsMatch(full))
+            {
+                Add(GoogleSize.Replace(full, "=s0"));
+                Add(GoogleSize.Replace(full, "=s1600"));
+            }
+            else if (GoogleSizeSegment.IsMatch(path))
+            {
+                Add(Origin() + GoogleSizeSegment.Replace(path, "/s0/", 1));
+            }
+        }
+        else if (host.EndsWith("ytimg.com") && YouTubeThumb.Match(path) is { Success: true } thumb)
+        {
+            var id = thumb.Groups[2].Value;
+            foreach (var name in new[] { "maxresdefault.jpg", "sddefault.jpg", "hqdefault.jpg" }) Add($"https://i.ytimg.com/vi/{id}/{name}");
+        }
+        else if (host == "pbs.twimg.com")
+        {
+            if (path.StartsWith("/media/", StringComparison.OrdinalIgnoreCase))
+            {
+                var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+                var format = query["format"] ?? (Path.HasExtension(path) ? Path.GetExtension(path).TrimStart('.') : "jpg");
+                var stem = Path.HasExtension(path) ? path[..^Path.GetExtension(path).Length] : path;
+                Add($"{Origin()}{stem}?format={format}&name=orig");
+                Add($"{Origin()}{stem}?format={format}&name=large");
+            }
+            else if (TwitterProfile.IsMatch(path))
+            {
+                Add(Origin() + TwitterProfile.Replace(path, "$2"));
+                Add(Origin() + TwitterProfile.Replace(path, "_400x400$2"));
+            }
+        }
+        else if (host == "upload.wikimedia.org" && WikimediaThumb.Match(path) is { Success: true } wiki)
+        {
+            Add(Origin() + wiki.Groups[1].Value + wiki.Groups[2].Value);
+        }
+        else if (host == "preview.redd.it")
+        {
+            Add("https://i.redd.it" + path);
+        }
+        else if (host == "i.imgur.com" && ImgurSuffix.Match(path) is { Success: true } imgur)
+        {
+            Add($"{Origin()}/{imgur.Groups[1].Value}{imgur.Groups[2].Value}");
+        }
+        else if (host.EndsWith("media-amazon.com") && AmazonSize.IsMatch(path))
+        {
+            Add(Origin() + AmazonSize.Replace(path, "$1"));
+        }
+        else if (host.EndsWith("pinimg.com") && Regex.IsMatch(path, @"^/[0-9]+x[0-9]*/"))
+        {
+            Add(Origin() + Regex.Replace(path, @"^/[0-9]+x[0-9]*/", "/originals/"));
+        }
+        else
+        {
+            if (WordPressSize.IsMatch(path)) Add(Origin() + WordPressSize.Replace(path, "$1") + uri.Query);
+            // Image CDNs that resize on request: ?w=300&h=200 -> the same picture without the size.
+            if (uri.Query.Length > 1)
+            {
+                var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+                bool sized = false;
+                foreach (var key in SizeQueryKeys)
+                {
+                    if (query[key] == null) continue;
+                    query.Remove(key);
+                    sized = true;
+                }
+                if (sized)
+                {
+                    var rest = query.ToString();
+                    Add(uri.GetLeftPart(UriPartial.Path) + (string.IsNullOrEmpty(rest) ? "" : "?" + rest));
+                }
+            }
+        }
+        Add(url);
+        return list;
     }
 
     /// <summary>A file name for saving: the name in the link or file, else "image-date-time.png".</summary>

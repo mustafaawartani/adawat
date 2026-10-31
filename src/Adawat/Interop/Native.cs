@@ -14,6 +14,7 @@ public static class Native
     public const int WM_LBUTTONUP = 0x0202;
     public const int WM_RBUTTONDOWN = 0x0204;
     public const int WM_MBUTTONDOWN = 0x0207;
+    public const int WM_MOUSEMOVE = 0x0200;
     public const int WM_MOUSEWHEEL = 0x020A;
     public const int WM_MOUSEHWHEEL = 0x020E;
     public const int WM_QUIT = 0x0012;
@@ -104,6 +105,16 @@ public static class Native
 
     [DllImport("user32.dll")]
     public static extern short GetAsyncKeyState(int vKey);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct LASTINPUTINFO
+    {
+        public uint cbSize;
+        public uint dwTime;
+    }
+
+    [DllImport("user32.dll")]
+    public static extern bool GetLastInputInfo(ref LASTINPUTINFO info);
 
     // ---- Clipboard --------------------------------------------------------
     [DllImport("user32.dll")]

@@ -66,12 +66,12 @@ public static class PopupUi
     /// <summary>The one filled button: accent background, rounded, short label.</summary>
     public static Border PillButton(string text, Action onClick)
     {
-        var label = Text(text, 13, "OnAccent", FontWeights.SemiBold);
+        var label = Text(text, 12.5, "OnAccent", FontWeights.SemiBold);
         label.TextWrapping = TextWrapping.NoWrap;
         var button = new Border
         {
-            CornerRadius = new CornerRadius(16),
-            Padding = new Thickness(16, 6, 16, 7),
+            CornerRadius = new CornerRadius(14),
+            Padding = new Thickness(14, 5, 14, 6),
             Child = label,
             Cursor = Cursors.Hand,
             VerticalAlignment = VerticalAlignment.Center,

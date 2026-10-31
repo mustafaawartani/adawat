@@ -35,6 +35,7 @@ public sealed class AppSettings
     public OcrSettings Ocr { get; set; } = new();
     public GestureSettings Gestures { get; set; } = new();
     public ImageZoomSettings ImageZoom { get; set; } = new();
+    public KeyRemapSettings KeyChanges { get; set; } = new();
 }
 
 public sealed class TranslatorSettings
@@ -104,6 +105,8 @@ public sealed class GestureSettings
     public bool InvertSwipe { get; set; }
     public SwipeAction SwipeAction { get; set; } = SwipeAction.MouseButtons;
     public bool ShowSwipeArrow { get; set; } = true;
+    /// <summary>Skip the swipe (no arrow, no back/forward) when the app's own back/forward button is greyed out.</summary>
+    public bool SwipeOnlyWhenPossible { get; set; } = true;
     public List<string> SwipeDisabledApps { get; set; } = new()
     {
         "chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe", "vivaldi.exe", "arc.exe", "zen.exe",
@@ -114,7 +117,11 @@ public sealed class GestureSettings
     public bool InvertPinch { get; set; }
     /// <summary>Screen zoom magnifies the picture like Chrome; the others make apps change their own zoom.</summary>
     public PinchAction PinchAction { get; set; } = PinchAction.ScreenZoom;
-    public double MaxScreenZoom { get; set; } = 5;
+    public double MaxScreenZoom { get; set; } = 4;
+    /// <summary>1..100: how fast the screen zooms as the fingers spread (see ZoomView.GainForSpeed).</summary>
+    public int ScreenZoomSpeed { get; set; } = 50;
+    /// <summary>Moving past the edge of the zoomed screen goes on to scroll the app, like Chrome.</summary>
+    public bool ScrollPastZoomEdges { get; set; } = true;
     /// <summary>True: enlarged pixels are smoothed (like Windows Magnifier's "smooth edges"). False: blocky, crisp pixels.</summary>
     public bool SmoothZoomEdges { get; set; } = true;
     /// <summary>When the fingers lift near 2x, 3x…, settle exactly there (the sharpest picture).</summary>
@@ -150,11 +157,28 @@ public sealed class ImageZoomSettings
     public string SaveHotkey { get; set; } = "Alt+S";
     public string CopyHotkey { get; set; } = "Alt+C";
     /// <summary>Pictures smaller than this (in screen pixels, both sides) are ignored, so icons don't pop up.</summary>
-    public int MinSize { get; set; } = 48;
+    public int MinSize { get; set; } = 32;
     /// <summary>Also enlarge pictures whose full-size file or address is unknown, from what is on screen.</summary>
     public bool EnlargeScreenPictures { get; set; } = true;
     public List<string> DisabledApps { get; set; } = new();
     public bool DisableInFullscreen { get; set; } = true;
+}
+
+/// <summary>Change keys: make one key act as another (e.g. Left Alt as Left Ctrl).</summary>
+public sealed class KeyRemapSettings
+{
+    public bool Enabled { get; set; } = true;
+    public List<KeyRemap> Remaps { get; set; } = new();
+    /// <summary>Apps where keys keep their normal meaning (games, remote desktop…).</summary>
+    public List<string> DisabledApps { get; set; } = new();
+}
+
+/// <summary>One key change. Keys are Windows virtual-key codes (left/right sides separate); To = 0 turns the key off.</summary>
+public sealed class KeyRemap
+{
+    public int From { get; set; }
+    public int To { get; set; }
+    public bool Enabled { get; set; } = true;
 }
 
 /// <summary>Loads and saves <see cref="AppSettings"/> as JSON in %AppData%\Adawat.</summary>
@@ -167,7 +191,7 @@ public static class SettingsStore
         Converters = { new JsonStringEnumConverter() },
     };
 
-    public const int CurrentVersion = 4;
+    public const int CurrentVersion = 5;
 
     public static string FilePath => Path.Combine(AppPaths.DataFolder, "settings.json");
 
@@ -192,9 +216,24 @@ public static class SettingsStore
             settings.Gestures.SmoothZoomEdges = true;
             settings.Gestures.SnapZoomLevels = false;
         }
+        if (settings.SettingsVersion < 5)
+        {
+            // The screen zoom speed used to share "pinch sensitivity" with app zoom, on a much narrower
+            // range. Keep the same feel, except for anyone already at the slowest: they asked for slower.
+            var g = settings.Gestures;
+            double oldGain = 0.8 + 1.7 * Math.Clamp(g.PinchSensitivity, 1, 100) / 100.0;
+            g.ScreenZoomSpeed = SpeedForGain(oldGain);
+            if (g.PinchSensitivity <= 5) g.ScreenZoomSpeed = Math.Min(g.ScreenZoomSpeed, 30);
+            // Small pictures such as profile pictures next to videos and comments now open too.
+            if (settings.ImageZoom.MinSize == 48) settings.ImageZoom.MinSize = 32;
+        }
         settings.SettingsVersion = CurrentVersion;
         return settings;
     }
+
+    /// <summary>Same formula as ZoomView.SpeedForGain (kept here so the settings do not depend on the gestures code).</summary>
+    private static int SpeedForGain(double gain) =>
+        (int)Math.Round(Math.Clamp(100 * Math.Log(gain / 0.3) / Math.Log(2.5 / 0.3), 1, 100));
 
     public static AppSettings Load()
     {

@@ -116,6 +116,13 @@ public static class WindowInfo
         return !NonTextCursors.Contains(info.hCursor);
     }
 
+    /// <summary>True only for the standard text cursor (I-beam). Strict: drag-and-drop cursors don't count.</summary>
+    public static bool IsTextBeamCursor()
+    {
+        var info = new Native.CURSORINFO { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<Native.CURSORINFO>() };
+        return Native.GetCursorInfo(ref info) && info.hCursor != IntPtr.Zero && info.hCursor == IBeam;
+    }
+
     private static readonly IntPtr IBeam = Native.LoadCursor(IntPtr.Zero, new IntPtr(Native.IDC_IBEAM));
 
     // IDC_ARROW, WAIT, CROSS, SIZENWSE, SIZENESW, SIZEWE, SIZENS, SIZEALL, NO, HAND, APPSTARTING, HELP

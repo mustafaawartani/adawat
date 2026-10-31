@@ -12,6 +12,7 @@ public sealed class TrayIcon : IDisposable
     private readonly AppSettings _settings;
     private readonly ToolStripMenuItem _translatorItem;
     private readonly ToolStripMenuItem _gesturesItem;
+    private readonly ToolStripMenuItem _keysItem;
     private readonly ToolStripMenuItem _imageZoomItem;
     private readonly ToolStripMenuItem _translateItem;
     private readonly ToolStripMenuItem _boxItem;
@@ -27,6 +28,11 @@ public sealed class TrayIcon : IDisposable
         _translatorItem = new ToolStripMenuItem("Translator on", null, (_, _) =>
         {
             _settings.Translator.Enabled = !_settings.Translator.Enabled;
+            settingsChanged();
+        });
+        _keysItem = new ToolStripMenuItem("Key changes on", null, (_, _) =>
+        {
+            _settings.KeyChanges.Enabled = !_settings.KeyChanges.Enabled;
             settingsChanged();
         });
         _gesturesItem = new ToolStripMenuItem("Touchpad gestures on", null, (_, _) =>
@@ -47,6 +53,7 @@ public sealed class TrayIcon : IDisposable
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(_translatorItem);
         menu.Items.Add(_gesturesItem);
+        menu.Items.Add(_keysItem);
         menu.Items.Add(_imageZoomItem);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(new ToolStripMenuItem("History", null, (_, _) => openSettingsPage("History")));
@@ -73,6 +80,8 @@ public sealed class TrayIcon : IDisposable
     {
         _translatorItem.Checked = _settings.Translator.Enabled;
         _gesturesItem.Checked = _settings.Gestures.Enabled;
+        _keysItem.Checked = _settings.KeyChanges.Enabled;
+        _keysItem.Visible = _settings.KeyChanges.Remaps.Count > 0;
         _imageZoomItem.Checked = _settings.ImageZoom.Enabled;
         _translateItem.ShortcutKeyDisplayString = _settings.Translator.TranslateHotkey;
         _boxItem.ShortcutKeyDisplayString = _settings.Translator.OpenBoxHotkey;

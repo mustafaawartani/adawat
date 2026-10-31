@@ -71,12 +71,31 @@ public sealed class ZoomView
         else (TargetX, TargetY) = Clamp(TargetLevel, TargetX, TargetY);
     }
 
-    /// <summary>Moves the target view by screen pixels (unzoomed coordinates). Ends the anchor.</summary>
-    public void PanBy(double dx, double dy)
+    /// <summary>
+    /// Moves the target view by screen pixels (unzoomed coordinates). Ends the anchor. Returns the
+    /// part of the movement that did not fit because the view reached the edge of the screen: like
+    /// Chrome, that part goes on to scroll the page itself.
+    /// </summary>
+    public (double X, double Y) PanBy(double dx, double dy)
     {
         _anchored = false;
-        (TargetX, TargetY) = Clamp(TargetLevel, TargetX + dx, TargetY + dy);
+        double wantX = TargetX + dx, wantY = TargetY + dy;
+        (TargetX, TargetY) = Clamp(TargetLevel, wantX, wantY);
+        return (wantX - TargetX, wantY - TargetY);
     }
+
+    /// <summary>
+    /// The zoom speed setting (1..100) as the power the finger spread is raised to: 1 is very slow
+    /// (spreading the fingers six times as far only zooms ~1.7x), 50 is gentle, 100 is fast.
+    /// </summary>
+    public static double GainForSpeed(double speed) =>
+        SlowestGain * Math.Pow(FastestGain / SlowestGain, Math.Clamp(speed, 1, 100) / 100.0);
+
+    /// <summary>The setting value that gives <paramref name="gain"/> (for moving old settings over).</summary>
+    public static int SpeedForGain(double gain) =>
+        (int)Math.Round(Math.Clamp(100 * Math.Log(Math.Max(gain, 1e-6) / SlowestGain) / Math.Log(FastestGain / SlowestGain), 1, 100));
+
+    public const double SlowestGain = 0.3, FastestGain = 2.5;
 
     /// <summary>Moves the target view so its top-left corner is at <paramref name="x"/>,<paramref name="y"/>. Ends the anchor.</summary>
     public void PanTo(double x, double y)

@@ -26,6 +26,7 @@ public sealed class ImageFinder : IDisposable
 {
     private readonly BlockingCollection<Action> _work = new();
     private readonly Thread _thread;
+    private int _busy;
 
     public ImageFinder()
     {
@@ -45,7 +46,9 @@ public sealed class ImageFinder : IDisposable
     /// <summary>The picture at the physical screen point, or null.</summary>
     public Task<ImageHit?> FindAsync(Native.POINT point, int minSize)
     {
-        var result = new TaskCompletionSource<ImageHit?>();
+        // An app that answers slowly must not pile up questions behind it: one at a time.
+        if (Interlocked.Exchange(ref _busy, 1) == 1) return Task.FromResult<ImageHit?>(null);
+        var result = new TaskCompletionSource<ImageHit?>(TaskCreationOptions.RunContinuationsAsynchronously);
         _work.Add(() =>
         {
             try
@@ -56,6 +59,10 @@ public sealed class ImageFinder : IDisposable
             {
                 Log.Info($"Picture zoom could not look under the pointer: {ex.Message}");
                 result.TrySetResult(null);
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _busy, 0);
             }
         });
         return result.Task;
@@ -88,6 +95,7 @@ public sealed class ImageFinder : IDisposable
         }
 
         var chain = new List<string>();
+        var containers = new List<AutomationElement>();
         for (int depth = 0; start != null && depth < 5; depth++, start = SafeParent(walker, start))
         {
             var info = start.Current;
@@ -96,21 +104,119 @@ public sealed class ImageFinder : IDisposable
             var bounds = ToPixels(info.BoundingRectangle);
             if (bounds == null) continue;
 
-            if (type == ControlType.Image)
-            {
-                if (bounds.Value.Width < minSize || bounds.Value.Height < minSize)
-                {
-                    Trace($"Picture in {process} is smaller than {minSize} px ({bounds.Value.Width}×{bounds.Value.Height})");
-                    return null;
-                }
-                var url = ImageUrl(start, walker);
-                return new ImageHit(bounds.Value, null, url, info.Name);
-            }
+            if (type == ControlType.Image) return Hit(start, bounds.Value, info.Name, process, minSize, walker, point);
 
             // Stop at things that are clearly not part of a picture.
             if (type == ControlType.Window || type == ControlType.Document || type == ControlType.Pane && depth > 0) break;
+            containers.Add(start);
+        }
+
+        // Pictures on web pages are often covered by something else (a link, a play button, a
+        // shadow layer, a video length label), so the pointer is "on" that and not on the picture.
+        // Look below the nearest small containers for a picture under the pointer.
+        var screenArea = (double)System.Windows.Forms.SystemInformation.VirtualScreen.Width * System.Windows.Forms.SystemInformation.VirtualScreen.Height;
+        foreach (var container in containers.Take(4))
+        {
+            var box = ToPixels(SafeBounds(container));
+            if (box == null || (double)box.Value.Width * box.Value.Height > screenArea * 0.4) break;
+            var covered = PictureBelow(container, point);
+            if (covered != null)
+            {
+                var (element, bounds, name) = covered.Value;
+                return Hit(element, bounds, name, process, minSize, walker, point);
+            }
         }
         Trace($"No picture in {process} under the pointer ({string.Join(" < ", chain)})");
+        return null;
+    }
+
+    private static ImageHit? Hit(AutomationElement image, PixelRect bounds, string name, string process, int minSize, TreeWalker walker, Native.POINT point)
+    {
+        if (bounds.Width < minSize || bounds.Height < minSize)
+        {
+            Trace($"Picture in {process} is smaller than {minSize} px ({bounds.Width}×{bounds.Height})");
+            return null;
+        }
+        var url = ImageUrl(image, walker) ?? LegacyImageUrl(point);
+        if (url == null) Trace($"Picture in {process} gives no address; it will be enlarged from the screen");
+        return new ImageHit(bounds, null, url, name);
+    }
+
+    /// <summary>The smallest picture element inside <paramref name="container"/> that is under the point.</summary>
+    private static (AutomationElement Element, PixelRect Bounds, string Name)? PictureBelow(AutomationElement container, Native.POINT point)
+    {
+        try
+        {
+            var cache = new CacheRequest { TreeScope = TreeScope.Element };
+            cache.Add(AutomationElement.BoundingRectangleProperty);
+            cache.Add(AutomationElement.NameProperty);
+            AutomationElementCollection images;
+            using (cache.Activate())
+            {
+                images = container.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Image));
+            }
+            (AutomationElement, PixelRect, string)? best = null;
+            int count = 0;
+            foreach (AutomationElement image in images)
+            {
+                if (++count > 200) break;
+                var bounds = ToPixels(image.Cached.BoundingRectangle);
+                if (bounds == null || !bounds.Value.Contains(point.X, point.Y)) continue;
+                if (best == null || (long)bounds.Value.Width * bounds.Value.Height < (long)best.Value.Item2.Width * best.Value.Item2.Height)
+                    best = (image, bounds.Value, image.Cached.Name ?? "");
+            }
+            return best;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static System.Windows.Rect SafeBounds(AutomationElement element)
+    {
+        try { return element.Current.BoundingRectangle; } catch { return System.Windows.Rect.Empty; }
+    }
+
+    // ---- The picture's address through the older accessibility interface (MSAA) ----------
+
+    [DllImport("oleacc.dll")]
+    private static extern int AccessibleObjectFromPoint(Native.POINT pt, [MarshalAs(UnmanagedType.Interface)] out Accessibility.IAccessible accessible, out object child);
+
+    private const int ROLE_SYSTEM_GRAPHIC = 0x28;
+
+    /// <summary>
+    /// Browsers based on Chromium and Firefox give a picture's address as its "value" in the older
+    /// accessibility interface, also when the newer one does not.
+    /// </summary>
+    private static string? LegacyImageUrl(Native.POINT point)
+    {
+        try
+        {
+            if (AccessibleObjectFromPoint(point, out var accessible, out var child) != 0 || accessible == null) return null;
+            try
+            {
+                for (int i = 0; i < 3 && accessible != null; i++)
+                {
+                    if (accessible.get_accRole(child) is int role && role == ROLE_SYSTEM_GRAPHIC)
+                    {
+                        var value = accessible.get_accValue(child);
+                        return ImageZoomLogic.IsPictureSource(value) ? value : null;
+                    }
+                    // A picture inside a link: the link is what was hit; its first child may be the picture.
+                    if (child is int id && id != 0) break;
+                    accessible = accessible.accParent as Accessibility.IAccessible;
+                    child = 0;
+                }
+            }
+            finally
+            {
+                if (accessible != null && Marshal.IsComObject(accessible)) Marshal.ReleaseComObject(accessible);
+            }
+        }
+        catch
+        {
+        }
         return null;
     }
 
@@ -142,14 +248,16 @@ public sealed class ImageFinder : IDisposable
     /// <summary>The address of the full picture: the picture's own value, or the link around it when that points to a picture.</summary>
     private static string? ImageUrl(AutomationElement image, TreeWalker walker)
     {
+        // The picture's own address (its src) counts even without an extension: YouTube and Google
+        // pictures have none, and used to be enlarged from the screen (blurry) because of that.
         var own = ValueOf(image);
-        if (ImageZoomLogic.LooksLikeImageUrl(own)) return own;
+        if (ImageZoomLogic.IsPictureSource(own)) return own;
         var parent = SafeParent(walker, image);
         for (int i = 0; parent != null && i < 3; i++, parent = SafeParent(walker, parent))
         {
             if (parent.Current.ControlType != ControlType.Hyperlink) continue;
             var href = ValueOf(parent);
-            return ImageZoomLogic.LooksLikeImageUrl(href) ? href : null;
+            return ImageZoomLogic.LooksLikeImageUrl(href) || ImageZoomLogic.IsPictureHost(href) ? href : null;
         }
         return null;
     }

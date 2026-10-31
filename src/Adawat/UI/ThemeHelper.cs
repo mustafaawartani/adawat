@@ -112,11 +112,12 @@ public static class ThemeHelper
         bool dark = IsDark;
         bool glass = GlassSupported;
         var accent = AccentColor;
+        var colors = _appColors;
         void Set(string key, Color color)
         {
             var brush = new SolidColorBrush(color);
             brush.Freeze();
-            _appColors[key] = brush;
+            colors[key] = brush;
         }
         Color Alpha(Color c, double opacity) => Color.FromArgb((byte)Math.Round(255 * opacity), c.R, c.G, c.B);
 
@@ -139,16 +140,15 @@ public static class ThemeHelper
     }
 
     /// <summary>
-    /// Puts the palette into <paramref name="resources"/> as brushes: Adawat.Surface (solid window
-    /// color), Adawat.Glass (the window color over the glass backdrop), Adawat.Subtle (cards),
-    /// Adawat.Hover, Adawat.Border, Adawat.Text, Adawat.Muted, Adawat.Faint, Adawat.Accent,
-    /// Adawat.AccentSoft (tinted backgrounds), Adawat.OnAccent (text on the accent), Adawat.Tint
-    /// and Adawat.TintBorder (the translation area). The neutrals carry a little of the accent.
+    /// Puts the palette into <paramref name="resources"/> as brushes: Adawat.Surface (the solid window
+    /// color), Adawat.Subtle (quiet fills), Adawat.Hover, Adawat.Pressed, Adawat.Border, Adawat.Divider,
+    /// Adawat.Text, Adawat.Muted, Adawat.Faint, Adawat.Accent, Adawat.AccentSoft (tinted backgrounds),
+    /// Adawat.OnAccent (text on the accent) and Adawat.Error.
+    /// The neutrals are plain greys: the accent is kept for what can be clicked, so nothing looks muddy.
     /// </summary>
     public static void ApplyPalette(ResourceDictionary resources)
     {
         bool dark = IsDark;
-        bool glass = GlassSupported;
         var accent = AccentColor;
         void Set(string key, Color color)
         {
@@ -156,24 +156,37 @@ public static class ThemeHelper
             brush.Freeze();
             resources["Adawat." + key] = brush;
         }
-        Color Alpha(Color c, double opacity) => Color.FromArgb((byte)Math.Round(255 * opacity), c.R, c.G, c.B);
 
-        var surface = dark ? Blend(Color.FromRgb(0x1F, 0x20, 0x24), accent, 0.06) : Blend(Colors.White, accent, 0.03);
-        Set("Surface", surface);
-        Set("Glass", glass ? Alpha(surface, dark ? 0.62 : 0.68) : surface);
-        Set("Subtle", dark ? Blend(Color.FromRgb(0x2A, 0x2B, 0x30), accent, 0.12) : Blend(Color.FromRgb(0xF3, 0xF5, 0xF8), accent, 0.08));
-        Set("Hover", dark ? Blend(Color.FromRgb(0x33, 0x35, 0x3B), accent, 0.16) : Blend(Color.FromRgb(0xEC, 0xEF, 0xF4), accent, 0.12));
-        Set("Border", dark ? Blend(Color.FromRgb(0x3A, 0x3C, 0x42), accent, 0.15) : Blend(Color.FromRgb(0xE3, 0xE7, 0xED), accent, 0.14));
-        Set("Text", dark ? Color.FromRgb(0xF1, 0xF3, 0xF6) : Blend(Color.FromRgb(0x14, 0x1A, 0x24), accent, 0.08));
-        Set("Muted", dark ? Blend(Color.FromRgb(0xA4, 0xAB, 0xB8), accent, 0.12) : Blend(Color.FromRgb(0x5E, 0x6A, 0x7D), accent, 0.14));
-        Set("Faint", dark ? Color.FromRgb(0x70, 0x77, 0x84) : Color.FromRgb(0x9A, 0xA4, 0xB2));
+        if (dark)
+        {
+            Set("Surface", Color.FromRgb(0x1E, 0x1F, 0x22));
+            Set("Subtle", Color.FromRgb(0x27, 0x28, 0x2C));
+            Set("Hover", Color.FromRgb(0x2E, 0x30, 0x34));
+            Set("Pressed", Color.FromRgb(0x36, 0x38, 0x3D));
+            Set("Border", Color.FromRgb(0x3A, 0x3C, 0x41));
+            Set("Divider", Color.FromRgb(0x2F, 0x31, 0x35));
+            Set("Text", Color.FromRgb(0xEC, 0xED, 0xEF));
+            Set("Muted", Color.FromRgb(0xA1, 0xA5, 0xAC));
+            Set("Faint", Color.FromRgb(0x6F, 0x74, 0x7B));
+            Set("OnAccent", Color.FromRgb(0x10, 0x12, 0x16));
+            Set("Error", Color.FromRgb(0xF2, 0x8B, 0x82));
+        }
+        else
+        {
+            Set("Surface", Colors.White);
+            Set("Subtle", Color.FromRgb(0xF5, 0xF6, 0xF8));
+            Set("Hover", Color.FromRgb(0xF0, 0xF1, 0xF4));
+            Set("Pressed", Color.FromRgb(0xE6, 0xE8, 0xEC));
+            Set("Border", Color.FromRgb(0xE3, 0xE5, 0xE9));
+            Set("Divider", Color.FromRgb(0xEE, 0xEF, 0xF2));
+            Set("Text", Color.FromRgb(0x17, 0x19, 0x1D));
+            Set("Muted", Color.FromRgb(0x6A, 0x70, 0x79));
+            Set("Faint", Color.FromRgb(0xA2, 0xA7, 0xAF));
+            Set("OnAccent", Colors.White);
+            Set("Error", Color.FromRgb(0xC5, 0x22, 0x1F));
+        }
         Set("Accent", accent);
-        Set("AccentSoft", Color.FromArgb(dark ? (byte)0x33 : (byte)0x1C, accent.R, accent.G, accent.B));
-        Set("OnAccent", dark ? Color.FromRgb(0x0B, 0x10, 0x18) : Colors.White);
-        // The translation area: clearly in the accent color, still light enough to read.
-        var tint = Blend(surface, accent, dark ? 0.16 : 0.11);
-        Set("Tint", glass ? Alpha(tint, dark ? 0.72 : 0.78) : tint);
-        Set("TintBorder", Blend(surface, accent, dark ? 0.26 : 0.2));
+        Set("AccentSoft", Color.FromArgb(dark ? (byte)0x2E : (byte)0x16, accent.R, accent.G, accent.B));
     }
 
     /// <summary>The palette color for a key (see <see cref="ApplyPalette"/>), for code that needs a raw color.</summary>

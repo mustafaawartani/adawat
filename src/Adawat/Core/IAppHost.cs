@@ -1,4 +1,5 @@
 using System.Threading.Tasks;
+using Adawat.KeyChanges;
 using Adawat.Translator;
 
 namespace Adawat.Core;
@@ -10,6 +11,9 @@ public interface IAppHost
     HotkeyManager Hotkeys { get; }
     HistoryStore History { get; }
     bool TouchpadPresent { get; }
+
+    /// <summary>The key changes tool (catches a key press for the settings).</summary>
+    KeyRemapService KeyChanges { get; }
 
     /// <summary>Returns the screen zoom to normal size.</summary>
     void ResetZoom();

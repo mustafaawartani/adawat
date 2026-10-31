@@ -79,3 +79,42 @@ public class ImageZoomLogicTests
         Assert.Equal(3, layout.Scale, 6);
     }
 }
+
+public class FullSizePictureTests
+{
+    [Theory]
+    [InlineData("https://yt3.ggpht.com/ytc/AIdro_abc123=s88-c-k-c0x00ffffff-no-rj", "https://yt3.ggpht.com/ytc/AIdro_abc123=s0")]
+    [InlineData("https://lh3.googleusercontent.com/a/ACg8oc=s96-c", "https://lh3.googleusercontent.com/a/ACg8oc=s0")]
+    [InlineData("https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg?sqp=-oaymwE&rs=AOn4", "https://i.ytimg.com/vi/dQw4w9WgXcQ/maxresdefault.jpg")]
+    [InlineData("https://i.ytimg.com/vi_webp/dQw4w9WgXcQ/mqdefault.webp", "https://i.ytimg.com/vi/dQw4w9WgXcQ/maxresdefault.jpg")]
+    [InlineData("https://pbs.twimg.com/media/GabcXYZ?format=jpg&name=small", "https://pbs.twimg.com/media/GabcXYZ?format=jpg&name=orig")]
+    [InlineData("https://pbs.twimg.com/profile_images/123/photo_normal.jpg", "https://pbs.twimg.com/profile_images/123/photo.jpg")]
+    [InlineData("https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/Cat.jpg/220px-Cat.jpg", "https://upload.wikimedia.org/wikipedia/commons/a/ab/Cat.jpg")]
+    [InlineData("https://preview.redd.it/abc123.jpg?width=640&auto=webp", "https://i.redd.it/abc123.jpg")]
+    [InlineData("https://m.media-amazon.com/images/I/71abcDEF._AC_SX300_.jpg", "https://m.media-amazon.com/images/I/71abcDEF.jpg")]
+    [InlineData("https://i.imgur.com/AbCdEfGm.jpg", "https://i.imgur.com/AbCdEfG.jpg")]
+    [InlineData("https://i.pinimg.com/236x/aa/bb/cc/photo.jpg", "https://i.pinimg.com/originals/aa/bb/cc/photo.jpg")]
+    [InlineData("https://example.com/wp-content/uploads/2024/05/photo-300x200.jpg", "https://example.com/wp-content/uploads/2024/05/photo.jpg")]
+    [InlineData("https://images.example.com/photo.jpg?w=300&h=200&auto=format", "https://images.example.com/photo.jpg?auto=format")]
+    public void TriesTheFullSizePictureFirst(string shown, string full)
+    {
+        var candidates = ImageZoomLogic.FullSizeCandidates(shown);
+        Assert.Equal(full, candidates[0]);
+        Assert.Equal(shown, candidates[^1]); // the picture as shown is always the last resort
+    }
+
+    [Fact]
+    public void PlainAddressesAreTriedAsTheyAre()
+    {
+        Assert.Equal(new[] { "https://example.com/a.png" }, ImageZoomLogic.FullSizeCandidates("https://example.com/a.png"));
+        Assert.Equal(new[] { "data:image/png;base64,AA" }, ImageZoomLogic.FullSizeCandidates("data:image/png;base64,AA"));
+    }
+
+    [Theory]
+    [InlineData("https://yt3.ggpht.com/abc=s88-c-k", true)]  // no extension, still a picture
+    [InlineData("data:image/png;base64,AA", true)]
+    [InlineData("javascript:void(0)", false)]
+    [InlineData("", false)]
+    public void PictureSourcesNeedNoExtension(string url, bool expected) =>
+        Assert.Equal(expected, ImageZoomLogic.IsPictureSource(url));
+}

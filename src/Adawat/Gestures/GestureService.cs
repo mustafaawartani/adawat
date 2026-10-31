@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Threading;
 using Adawat.Core;
 using Adawat.Interop;
@@ -25,6 +26,9 @@ public sealed class GestureService : IDisposable
     private string _targetProcess = "";
     private bool _sessionBlocked;
     private bool _overlayShown;
+    private int _navSession = -1;
+    private Task<NavigationProbe.Result>? _nav;
+    private long _navStartedMs;
     private long _lastNativeWheelMs;
     private long _lastFrameMs;
     private volatile bool _zoomed;
@@ -82,8 +86,9 @@ public sealed class GestureService : IDisposable
             InvertPinch = g.InvertPinch,
         };
 
-        _magnifier.MaxLevel = Math.Clamp(g.MaxScreenZoom, 1.5, 10);
-        _magnifier.Gain = 0.8 + 1.7 * Math.Clamp(g.PinchSensitivity, 1, 100) / 100.0;
+        _magnifier.MaxLevel = Math.Clamp(g.MaxScreenZoom, 1.25, 10);
+        _magnifier.Gain = ZoomView.GainForSpeed(g.ScreenZoomSpeed);
+        _magnifier.ScrollPastEdges = g.ScrollPastZoomEdges;
         _magnifier.PanSpeed = 0.6 + 2.4 * Math.Clamp(g.PanSpeed, 1, 100) / 100.0;
         _magnifier.InvertPan = g.InvertPan;
         _magnifier.SnapToWholeLevels = g.SnapZoomLevels;
@@ -201,6 +206,18 @@ public sealed class GestureService : IDisposable
                 {
                     case GestureEventKind.SwipeUpdate:
                         if (!EnsureTarget(e.SessionId, swipe: true)) break;
+                        StartNavigationProbe(e.SessionId);
+                        var state = NavigationNow(e.Direction > 0);
+                        if (state == NavigationState.NotPossible || state == null)
+                        {
+                            // Nowhere to go (or not known yet, for a split second): no arrow.
+                            if (_overlayShown && state == NavigationState.NotPossible)
+                            {
+                                _overlay?.End(false);
+                                _overlayShown = false;
+                            }
+                            break;
+                        }
                         if (_settings.Gestures.ShowSwipeArrow)
                         {
                             _overlay ??= new SwipeArrowOverlay();
@@ -214,12 +231,9 @@ public sealed class GestureService : IDisposable
                         break;
 
                     case GestureEventKind.SwipeEnd:
-                        if (_overlayShown)
-                        {
-                            _overlay?.End(e.Committed && !_sessionBlocked);
-                            _overlayShown = false;
-                        }
-                        if (e.Committed && EnsureTarget(e.SessionId, swipe: true)) Navigate(e.Direction > 0);
+                        bool go = e.Committed && EnsureTarget(e.SessionId, swipe: true);
+                        _ = FinishSwipeAsync(go, e.Direction > 0, _overlayShown);
+                        _overlayShown = false;
                         break;
 
                     case GestureEventKind.PinchUpdate:
@@ -254,6 +268,51 @@ public sealed class GestureService : IDisposable
             {
                 Log.Error("Gesture action failed", ex);
             }
+        }
+    }
+
+    /// <summary>Starts looking, once per swipe, whether the app under the pointer can go back or forward.</summary>
+    private void StartNavigationProbe(int sessionId)
+    {
+        if (_navSession == sessionId) return;
+        _navSession = sessionId;
+        _navStartedMs = Environment.TickCount64;
+        _nav = _settings.Gestures.SwipeOnlyWhenPossible ? NavigationProbe.CheckAsync(_targetWindow) : null;
+    }
+
+    /// <summary>What is known so far; null while the answer is still on its way (for at most a moment).</summary>
+    private NavigationState? NavigationNow(bool forward)
+    {
+        if (_nav == null) return NavigationState.Unknown;
+        if (_nav.IsCompleted) return _nav.Result.For(forward);
+        return Environment.TickCount64 - _navStartedMs < 200 ? null : NavigationState.Unknown;
+    }
+
+    /// <summary>
+    /// The fingers lifted. Goes back/forward unless the app's own back/forward button is greyed out,
+    /// waiting a moment for that answer if needed, and lets the arrow finish accordingly.
+    /// </summary>
+    private async Task FinishSwipeAsync(bool committed, bool forward, bool overlayShown)
+    {
+        bool go = committed && !_sessionBlocked;
+        if (go && _nav != null && !_nav.IsCompleted)
+        {
+            long waited = Environment.TickCount64 - _navStartedMs;
+            await Task.WhenAny(_nav, Task.Delay((int)Math.Max(0, 450 - waited)));
+        }
+        if (go && _nav is { IsCompleted: true } && _nav.Result.For(forward) == NavigationState.NotPossible)
+        {
+            go = false;
+            Log.Info($"Swipe {(forward ? "forward" : "back")} skipped: {_targetProcess} has nowhere to go");
+        }
+        try
+        {
+            if (overlayShown) _overlay?.End(go);
+            if (go) Navigate(forward);
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Gesture action failed", ex);
         }
     }
 

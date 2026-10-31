@@ -7,6 +7,7 @@ using System.Windows.Threading;
 using Adawat.Core;
 using Adawat.Gestures;
 using Adawat.ImageZoom;
+using Adawat.KeyChanges;
 using Adawat.Ocr;
 using Adawat.Translator;
 using Adawat.UI;
@@ -29,6 +30,8 @@ public sealed class App : Application, IAppHost
     private OcrTool _ocr = null!;
     private GestureService _gestures = null!;
     private ImageZoomService _imageZoom = null!;
+    private KeyRemapService _keyChanges = null!;
+    private DispatcherTimer _hookWatch = null!;
     private TrayIcon _tray = null!;
     private TranslatorWindow? _popup;
     private SettingsWindow? _settingsWindow;
@@ -86,6 +89,7 @@ public sealed class App : Application, IAppHost
         _ocr = new OcrTool(Settings, _translator);
         _gestures = new GestureService(Settings, _messages);
         _imageZoom = new ImageZoomService(Settings, Hotkeys);
+        _keyChanges = new KeyRemapService(Settings);
         _mouseHook = new MouseHook();
         _mouseHook.MouseEvent += OnMouse;
         _mouseHook.BlockWheel = _gestures.ShouldBlockWheel;
@@ -106,6 +110,22 @@ public sealed class App : Application, IAppHost
         };
 
         ApplySettings();
+
+        // Windows can silently drop the mouse and keyboard hooks (a busy moment, sleep, a locked
+        // session); without them the translate button and the key changes stop working.
+        _hookWatch = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(3) };
+        _hookWatch.Tick += (_, _) => _mouseHook.CheckAlive();
+        _hookWatch.Start();
+        Microsoft.Win32.SystemEvents.PowerModeChanged += (_, e) =>
+        {
+            if (e.Mode == Microsoft.Win32.PowerModes.Resume) Dispatcher.BeginInvoke(RestartHooks);
+        };
+        Microsoft.Win32.SystemEvents.SessionSwitch += (_, e) =>
+        {
+            if (e.Reason is Microsoft.Win32.SessionSwitchReason.SessionUnlock or Microsoft.Win32.SessionSwitchReason.ConsoleConnect)
+                Dispatcher.BeginInvoke(RestartHooks);
+        };
+
         _instance.Listen(args => Dispatcher.BeginInvoke(() => HandleArguments(args, atStartup: false)));
         HandleArguments(_args, atStartup: true);
 
@@ -116,6 +136,13 @@ public sealed class App : Application, IAppHost
             _tray.ShowBalloon("Adawat is running",
                 $"Select text and press {Settings.Translator.TranslateHotkey} to translate. Click this icon for the translator box.");
         }
+    }
+
+    private void RestartHooks()
+    {
+        if (_tornDown) return;
+        _mouseHook.Restart();
+        _keyChanges.Restart();
     }
 
     private TranslatorWindow Popup =>
@@ -177,6 +204,7 @@ public sealed class App : Application, IAppHost
 
         _gestures.Apply();
         _imageZoom.Apply();
+        _keyChanges.Apply();
         StartupManager.ApplyRunKey(Settings);
         if (Settings.RunElevated && _appliedStartWithWindows != null && _appliedStartWithWindows != Settings.StartWithWindows)
         {
@@ -228,6 +256,8 @@ public sealed class App : Application, IAppHost
     public void ShowHistoryEntry(HistoryEntry entry) => Popup.ShowHistoryEntry(entry);
 
     public void ResetZoom() => _gestures.ResetZoom();
+
+    public KeyRemapService KeyChanges => _keyChanges;
 
     public bool TouchpadPresent => _touchpadPresent ??= TouchpadReader.IsTouchpadPresent();
 
@@ -288,6 +318,8 @@ public sealed class App : Application, IAppHost
             Hotkeys.Dispose();
             _gestures.Dispose();
             _imageZoom.Dispose();
+            _hookWatch?.Stop();
+            _keyChanges.Dispose();
             _translator.Dispose();
             _speech.Dispose();
             _tray.Dispose();

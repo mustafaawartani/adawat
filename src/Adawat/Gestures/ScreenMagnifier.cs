@@ -60,6 +60,14 @@ public sealed class ScreenMagnifier : IDisposable
     private bool _smoothingWanted;
     private bool? _smoothingApplied;
     private bool _wasZoomed;
+    private double _scrollX, _scrollY;               // movement past the screen edge, still to scroll (screen pixels)
+    private double _wheelRestX, _wheelRestY;         // wheel units not sent yet
+
+    /// <summary>
+    /// True: moving past the edge of the zoomed screen goes on to scroll the app, like Chrome.
+    /// False: the view simply stops at the edge.
+    /// </summary>
+    public bool ScrollPastEdges { get; set; } = true;
 
     public double MaxLevel { get => _view.MaxLevel; set { lock (_gate) _view.MaxLevel = value; } }
 
@@ -142,9 +150,53 @@ public sealed class ScreenMagnifier : IDisposable
             _gliding = false;
             double pixels = _view.ScreenWidth * PanSpeed / _view.TargetLevel;
             double sign = InvertPan ? 1 : -1;
-            _view.PanBy(sign * fingerDx * pixels, sign * fingerDy * pixels);
+            double dx = sign * fingerDx * pixels, dy = sign * fingerDy * pixels;
+            var (overX, overY) = _view.PanBy(dx, dy);
+            AddScroll(dx, dy, overX, overY);
         }
+        FlushScroll();
         _wake.Set();
+    }
+
+    /// <summary>Keeps the movement that went past the edge, to scroll the app with it (under the lock).</summary>
+    private void AddScroll(double dx, double dy, double overX, double overY)
+    {
+        if (!ScrollPastEdges) return;
+        // Only along the direction the fingers really go: a slight sideways drift while scrolling
+        // down must not scroll the page sideways.
+        if (Math.Abs(overX) > 0.01 && Math.Abs(dx) >= Math.Abs(dy) * 0.5) _scrollX += overX;
+        if (Math.Abs(overY) > 0.01 && Math.Abs(dy) >= Math.Abs(dx) * 0.5) _scrollY += overY;
+    }
+
+    /// <summary>
+    /// Sends the movement past the edge to the app under the pointer as smooth wheel scrolling, so the
+    /// page keeps moving under the fingers exactly where the zoomed view stopped, like Chrome.
+    /// </summary>
+    private void FlushScroll()
+    {
+        int wheelX, wheelY;
+        lock (_gate)
+        {
+            if (_scrollX == 0 && _scrollY == 0) return;
+            // Browsers scroll about 100 DIPs for one wheel notch (120 units).
+            double unitsPerPixel = 1.2 / Math.Max(1, WindowInfo.ScaleAt(WindowInfo.CursorPosition()));
+            _wheelRestY += -_scrollY * unitsPerPixel; // the view wants to go down: scroll the page down
+            _wheelRestX += _scrollX * unitsPerPixel;
+            _scrollX = _scrollY = 0;
+            wheelY = TakeWhole(ref _wheelRestY);
+            wheelX = TakeWhole(ref _wheelRestX);
+        }
+        if (wheelY != 0) InputSender.Wheel(wheelY, horizontal: false);
+        if (wheelX != 0) InputSender.Wheel(wheelX, horizontal: true);
+    }
+
+    /// <summary>Whole wheel units of at least a small step (some apps treat every wheel message as a full notch).</summary>
+    private static int TakeWhole(ref double rest)
+    {
+        if (Math.Abs(rest) < 10) return 0;
+        int whole = (int)Math.Truncate(rest);
+        rest -= whole;
+        return whole;
     }
 
     /// <summary>Fingers lifted: keep gliding a little with the finger speed (touchpad widths per second), like Chrome.</summary>
@@ -154,6 +206,7 @@ public sealed class ScreenMagnifier : IDisposable
         {
             _panning = false;
             if (!_view.IsZoomed) return;
+            _wheelRestX = _wheelRestY = 0;
             double pixels = _view.ScreenWidth * PanSpeed / _view.TargetLevel;
             double sign = InvertPan ? 1 : -1;
             _glideVx = sign * velocityX * pixels;
@@ -267,6 +320,7 @@ public sealed class ScreenMagnifier : IDisposable
                 }
             }
 
+            FlushScroll();
             if (setSmoothing != null && _smoothingApplied != smooth)
             {
                 try { setSmoothing(smooth); } catch { }
@@ -340,7 +394,9 @@ public sealed class ScreenMagnifier : IDisposable
             _gliding = false;
             return;
         }
-        _view.PanBy(_glideVx * dt, _glideVy * dt);
+        double dx = _glideVx * dt, dy = _glideVy * dt;
+        var (overX, overY) = _view.PanBy(dx, dy);
+        AddScroll(dx, dy, overX, overY);
     }
 
     /// <summary>While zoomed, glide the view along so the pointer never leaves the visible area.</summary>

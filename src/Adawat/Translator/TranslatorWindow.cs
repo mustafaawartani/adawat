@@ -36,7 +36,10 @@ public sealed class TranslatorWindow : FluentWindow
     private readonly LanguagePicker _targetPicker = new();
     private readonly TextBox _sourceBox;
     private readonly TextBlock _placeholder;
-    private readonly Border _bottom;
+    private readonly FrameworkElement _translateButton;
+    private readonly Grid _divider;
+    private readonly Border _progressBar;
+    private readonly StackPanel _resultSection;
     private readonly TextBox _resultBox;
     private readonly TextBox _secondBox;
     private readonly TextBlock _detected;
@@ -47,8 +50,8 @@ public sealed class TranslatorWindow : FluentWindow
     private readonly TextBlock _googleLink;
     private readonly DockPanel _footer;
     private readonly StackPanel _dictionaryPanel = new();
-    private readonly Border _resultCard;
-    private readonly Border _secondCard;
+    private readonly StackPanel _resultCard;
+    private readonly StackPanel _secondCard;
     private readonly Border _pinButton;
     private readonly DispatcherTimer _typingTimer;
 
@@ -59,6 +62,9 @@ public sealed class TranslatorWindow : FluentWindow
     private Native.POINT _anchor;
     private bool _pinned;
     private bool _statusIsError;
+    private bool _busy;
+    private bool _placedAbove;   // the popup sits above the selection: it grows upward
+    private string _translatedText = "";
     private bool _quiet; // suppresses change events while the window fills itself
     private IntPtr _hwnd;
 
@@ -76,39 +82,37 @@ public sealed class TranslatorWindow : FluentWindow
 
         Title = "Adawat Translator";
         Icon = AppIcon.ImageSource;
-        // Frosted glass where Windows supports it, with the palette's see-through colors on top.
-        WindowBackdropType = ThemeHelper.GlassSupported ? WindowBackdropType.Acrylic : WindowBackdropType.None;
+        // One solid surface: no see-through glass (it turned grey whenever the window was not
+        // in front, and showed through as an empty grey area under the content).
+        WindowBackdropType = WindowBackdropType.None;
         WindowCornerPreference = WindowCornerPreference.Round;
         ExtendsContentIntoTitleBar = true;
         ResizeMode = ResizeMode.NoResize;
         ShowInTaskbar = false;
         Topmost = true;
-        // Not SizeToContent: with the extended title bar WPF adds a blank strip at the bottom.
-        // The height follows the content instead (see the scroller below).
         WindowStartupLocation = WindowStartupLocation.Manual;
         Left = -10000;
         Top = -10000;
+        // WPF UI's window style asks for at least 320 x 460 DIPs, which left an empty strip under
+        // short translations. The window takes exactly the height of its content instead.
+        MinHeight = 0;
+        MinWidth = 0;
         MaxHeight = 760;
         FontFamily = new FontFamily(Ui.FontFamilyName);
         ApplyTheme();
-        if (ThemeHelper.GlassSupported) Background = Brushes.Transparent;
-        else SetResourceReference(BackgroundProperty, "Adawat.Surface");
+        SetResourceReference(BackgroundProperty, "Adawat.Surface");
 
-        // ---- Header: languages in a capsule, window buttons on the right ----------------
+        // ---- Header: from / swap / to on the left, window buttons on the right -----------
         var swap = PopupUi.IconButton(SymbolRegular.ArrowSwap20, "Swap languages", Swap, 15);
-        swap.Width = 28;
-        swap.Height = 28;
-        _targetPicker.Emphasized = true;
+        swap.Margin = new Thickness(2, 0, 2, 0);
         _pinButton = PopupUi.IconButton(SymbolRegular.Pin20, "Keep open", TogglePin);
-        var languages = new StackPanel { Orientation = Orientation.Horizontal };
+        var languages = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         languages.Children.Add(_sourcePicker);
         languages.Children.Add(swap);
         languages.Children.Add(_targetPicker);
-        var capsule = new Border { CornerRadius = new CornerRadius(18), Padding = new Thickness(3), Child = languages };
-        capsule.SetResourceReference(Border.BackgroundProperty, "Adawat.Subtle");
-        var header = new DockPanel { LastChildFill = false, Margin = new Thickness(0, 0, -4, 12), Background = Brushes.Transparent };
-        DockPanel.SetDock(capsule, Dock.Left);
-        header.Children.Add(capsule);
+        var header = new DockPanel { LastChildFill = false, Margin = new Thickness(10, 8, 8, 0), Background = Brushes.Transparent };
+        DockPanel.SetDock(languages, Dock.Left);
+        header.Children.Add(languages);
         var tools = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         tools.Children.Add(_pinButton);
         tools.Children.Add(PopupUi.IconButton(SymbolRegular.Settings20, "Settings", () => { HideWindow(); _openSettings(); }));
@@ -117,18 +121,20 @@ public sealed class TranslatorWindow : FluentWindow
         header.Children.Add(tools);
         header.MouseLeftButtonDown += (_, e) =>
         {
-            if (e.OriginalSource is DockPanel) DragMove();
+            if (e.OriginalSource is not DockPanel) return;
+            _placedAbove = false; // moved by hand: stay where it was put
+            DragMove();
         };
-        foreach (UIElement child in new UIElement[] { capsule, tools }) WindowChrome.SetIsHitTestVisibleInChrome(child, true);
+        foreach (UIElement child in new UIElement[] { languages, tools }) WindowChrome.SetIsHitTestVisibleInChrome(child, true);
 
         // ---- Source text: no box, just the text ---------------------------------------
-        _sourceBox = PopupUi.PlainTextBox(T.FontSize + 1, readOnly: false);
+        _sourceBox = PopupUi.PlainTextBox(T.FontSize, readOnly: false);
         _sourceBox.AcceptsReturn = true;
-        _sourceBox.MinHeight = 26;
+        _sourceBox.MinHeight = 24;
         _sourceBox.MaxHeight = 160;
-        _placeholder = PopupUi.Text("Type or paste text, then press Enter", T.FontSize + 1, "Faint");
+        _placeholder = PopupUi.Text("Type or paste text", T.FontSize, "Faint");
         _placeholder.IsHitTestVisible = false;
-        var sourceField = new Grid { Margin = new Thickness(4, 0, 4, 0), Background = Brushes.Transparent, Cursor = Cursors.IBeam };
+        var sourceField = new Grid { Background = Brushes.Transparent, Cursor = Cursors.IBeam };
         sourceField.Children.Add(_placeholder);
         sourceField.Children.Add(_sourceBox);
         sourceField.MouseLeftButtonDown += (_, _) => _sourceBox.Focus();
@@ -145,6 +151,7 @@ public sealed class TranslatorWindow : FluentWindow
         _sourceBox.TextChanged += (_, _) =>
         {
             _placeholder.Visibility = _sourceBox.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+            UpdateTranslateButton();
             if (_quiet) return;
             UpdateSourceDirection();
             _typingTimer!.Stop();
@@ -157,89 +164,92 @@ public sealed class TranslatorWindow : FluentWindow
         _detected.TextTrimming = TextTrimming.CharacterEllipsis;
         _detected.Margin = new Thickness(6, 0, 8, 0);
         _modeLabel = PopupUi.Text("", 12, "Muted");
-        _modeLabel.Margin = new Thickness(4, 0, 0, 8);
+        _modeLabel.Margin = new Thickness(0, 0, 0, 6);
         _modeLabel.Visibility = Visibility.Collapsed;
 
-        var sourceTools = new DockPanel { Margin = new Thickness(-2, 10, 0, 0) };
+        var sourceTools = new DockPanel { Margin = new Thickness(10, 4, 14, 8), LastChildFill = true };
         var sourceLeft = new StackPanel { Orientation = Orientation.Horizontal };
         sourceLeft.Children.Add(PopupUi.IconButton(SymbolRegular.Speaker220, "Listen", () => Speak(_sourceBox.Text, SourceLanguageForSpeech())));
         sourceLeft.Children.Add(PopupUi.IconButton(SymbolRegular.Copy20, "Copy text", () => Copy(_sourceBox.Text)));
         sourceLeft.Children.Add(_detected);
-        var translateButton = PopupUi.PillButton("Translate", () => _ = TranslateAsync());
-        DockPanel.SetDock(translateButton, Dock.Right);
-        sourceTools.Children.Add(translateButton);
+        _translateButton = PopupUi.PillButton("Translate", () => _ = TranslateAsync());
+        _translateButton.Visibility = Visibility.Collapsed;
+        DockPanel.SetDock(_translateButton, Dock.Right);
+        sourceTools.Children.Add(_translateButton);
         sourceTools.Children.Add(sourceLeft);
 
-        var top = new StackPanel();
-        top.Children.Add(header);
-        top.Children.Add(_modeLabel);
-        top.Children.Add(sourceField);
-        top.Children.Add(sourceTools);
+        var source = new StackPanel { Margin = new Thickness(18, 12, 18, 0) };
+        source.Children.Add(_modeLabel);
+        source.Children.Add(sourceField);
 
-        // ---- Result: the tinted lower half ---------------------------------------------
-        _resultBox = PopupUi.PlainTextBox(T.FontSize + 3, readOnly: true);
-        _resultBox.FontWeight = FontWeights.Medium;
+        // ---- A hairline between text and translation; a thin bar runs along it while translating
+        _progressBar = new Border { Width = 90, Height = 2, CornerRadius = new CornerRadius(1), HorizontalAlignment = HorizontalAlignment.Left };
+        _progressBar.SetResourceReference(Border.BackgroundProperty, "Adawat.Accent");
+        _progressBar.RenderTransform = new TranslateTransform();
+        _progressBar.Visibility = Visibility.Collapsed;
+        var line = new Border { Height = 1, VerticalAlignment = VerticalAlignment.Center };
+        line.SetResourceReference(Border.BackgroundProperty, "Adawat.Divider");
+        _divider = new Grid { Height = 2, Margin = new Thickness(18, 0, 18, 0), ClipToBounds = true };
+        _divider.Children.Add(line);
+        _divider.Children.Add(_progressBar);
+
+        // ---- Result --------------------------------------------------------------------
+        _resultBox = PopupUi.PlainTextBox(T.FontSize + 2, readOnly: true);
         _resultBox.MaxHeight = 320;
         _translit = PopupUi.Text("", 12, "Muted");
-        _translit.FontStyle = FontStyles.Italic;
         _translit.Margin = new Thickness(0, 4, 0, 0);
+        _resultCard = new StackPanel();
+        _resultCard.Children.Add(_resultBox);
+        _resultCard.Children.Add(_translit);
+
+        _secondLabel = PopupUi.Text("", 11, "Muted", FontWeights.SemiBold);
+        _secondLabel.Margin = new Thickness(0, 14, 0, 3);
+        _secondBox = PopupUi.PlainTextBox(T.FontSize, readOnly: true);
+        _secondBox.MaxHeight = 200;
+        _secondCard = new StackPanel { Visibility = Visibility.Collapsed };
+        _secondCard.Children.Add(_secondLabel);
+        _secondCard.Children.Add(_secondBox);
+
+        _dictionaryPanel.Margin = new Thickness(0, 12, 0, 0);
+
         var resultTools = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(-8, 6, 0, 0) };
         resultTools.Children.Add(PopupUi.IconButton(SymbolRegular.Speaker220, "Listen", () => Speak(_resultBox.Text, _last?.TargetLanguage ?? _targetPicker.Code)));
         resultTools.Children.Add(PopupUi.IconButton(SymbolRegular.Copy20, "Copy translation", () => Copy(_resultBox.Text)));
-        var resultStack = new StackPanel();
-        resultStack.Children.Add(_resultBox);
-        resultStack.Children.Add(_translit);
-        resultStack.Children.Add(resultTools);
-        _resultCard = new Border { Child = resultStack };
 
-        // ---- Second language -----------------------------------------------------------
-        _secondLabel = PopupUi.Text("", 11, "Muted", FontWeights.SemiBold);
-        _secondLabel.Margin = new Thickness(0, 10, 0, 4);
-        _secondBox = PopupUi.PlainTextBox(T.FontSize + 1, readOnly: true);
-        _secondBox.MaxHeight = 200;
-        var secondStack = new StackPanel();
-        secondStack.Children.Add(_secondLabel);
-        secondStack.Children.Add(_secondBox);
-        _secondCard = new Border { Child = secondStack, BorderThickness = new Thickness(0, 1, 0, 0), Margin = new Thickness(0, 8, 0, 0) };
-        _secondCard.SetResourceReference(Border.BorderBrushProperty, "Adawat.TintBorder");
-        _secondCard.Visibility = Visibility.Collapsed;
-
-        _dictionaryPanel.Margin = new Thickness(0, 10, 0, 0);
+        _resultSection = new StackPanel { Margin = new Thickness(18, 14, 18, 0), Visibility = Visibility.Collapsed };
+        _resultSection.Children.Add(_resultCard);
+        _resultSection.Children.Add(_secondCard);
+        _resultSection.Children.Add(_dictionaryPanel);
+        _resultSection.Children.Add(resultTools);
 
         // ---- Footer ---------------------------------------------------------------------
         _status = PopupUi.Text("", 12, "Muted");
         _status.VerticalAlignment = VerticalAlignment.Center;
         _status.TextTrimming = TextTrimming.CharacterEllipsis;
         _status.TextWrapping = TextWrapping.NoWrap;
-        _googleLink = PopupUi.Link("Open in Google Translate", OpenInGoogle);
-        _footer = new DockPanel { Margin = new Thickness(0, 10, 0, 0) };
+        _googleLink = PopupUi.Link("Google Translate ↗", OpenInGoogle);
+        _googleLink.ToolTip = "Open in Google Translate";
+        _footer = new DockPanel { Margin = new Thickness(18, 2, 18, 12) };
         DockPanel.SetDock(_googleLink, Dock.Right);
         _footer.Children.Add(_googleLink);
         _footer.Children.Add(_status);
 
-        var bottomStack = new StackPanel();
-        bottomStack.Children.Add(_resultCard);
-        bottomStack.Children.Add(_secondCard);
-        bottomStack.Children.Add(_dictionaryPanel);
-        bottomStack.Children.Add(_footer);
-        _bottom = new Border { BorderThickness = new Thickness(0, 1, 0, 0), Padding = new Thickness(18, 14, 18, 12), Child = bottomStack };
-        _bottom.SetResourceReference(Border.BackgroundProperty, "Adawat.Tint");
-        _bottom.SetResourceReference(Border.BorderBrushProperty, "Adawat.TintBorder");
-
-        var topLayer = new Border { Padding = new Thickness(14, 12, 14, 12), Child = top };
-        topLayer.SetResourceReference(Border.BackgroundProperty, "Adawat.Glass");
         var root = new StackPanel();
-        root.Children.Add(topLayer);
-        root.Children.Add(_bottom);
-        // The scroller measures the content at its natural height; the window then takes that height.
+        root.Children.Add(header);
+        root.Children.Add(source);
+        root.Children.Add(sourceTools);
+        root.Children.Add(_divider);
+        root.Children.Add(_resultSection);
+        root.Children.Add(_footer);
+        // The scroller lets the content take its natural height; the window then takes exactly that.
         var scroller = new ScrollViewer
         {
             Content = root,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Hidden,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             Focusable = false,
         };
-        root.SizeChanged += (_, _) => Height = Math.Min(MaxHeight, Math.Ceiling(root.ActualHeight));
+        root.SizeChanged += (_, _) => FitHeight(root);
         Content = scroller;
 
         _typingTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(750) };
@@ -277,6 +287,7 @@ public sealed class TranslatorWindow : FluentWindow
             HideWindow();
         };
         SizeChanged += (_, _) => KeepOnScreen();
+        DpiChanged += (_, _) => FitHeight(root);
         SourceInitialized += (_, _) =>
         {
             _hwnd = new WindowInteropHelper(this).Handle;
@@ -286,8 +297,6 @@ public sealed class TranslatorWindow : FluentWindow
         {
             ApplyTheme();
             ApplyBorderColor();
-            // The glass follows light/dark only when applied again.
-            if (ThemeHelper.GlassSupported && _hwnd != IntPtr.Zero) WindowBackdrop.ApplyBackdrop(this, WindowBackdropType.Acrylic);
             if (_statusIsError) SetStatus(_status.Text, error: true);
         };
     }
@@ -315,17 +324,20 @@ public sealed class TranslatorWindow : FluentWindow
         _mode = mode;
         _anchor = anchor;
 
-        Width = Math.Clamp(T.PopupWidth, 440, 900);
-        _sourceBox.FontSize = T.FontSize + 1;
-        _placeholder.FontSize = T.FontSize + 1;
-        _resultBox.FontSize = T.FontSize + 3;
-        _secondBox.FontSize = T.FontSize + 1;
+        Width = Math.Clamp(T.PopupWidth, 400, 900);
+        MaxHeight = Math.Max(260, WindowInfo.WorkAreaAt(anchor).Height / WindowInfo.ScaleAt(anchor) - 24);
+        _sourceBox.FontSize = T.FontSize;
+        _placeholder.FontSize = T.FontSize;
+        _resultBox.FontSize = T.FontSize + 2;
+        _secondBox.FontSize = T.FontSize;
         _googleLink.Visibility = T.ShowOpenInGoogle ? Visibility.Visible : Visibility.Collapsed;
         FillLanguagePickers();
 
         _quiet = true;
         _sourceBox.Text = text ?? "";
         _quiet = false;
+        _translatedText = "";
+        UpdateTranslateButton();
         UpdateSourceDirection();
         ClearResult();
         _modeLabel.Text = mode == PopupMode.Image ? "Text found on screen. You can edit it before translating." : "";
@@ -365,8 +377,9 @@ public sealed class TranslatorWindow : FluentWindow
         _resultBox.Text = entry.Translation;
         _resultBox.FlowDirection = Languages.IsRightToLeft(entry.TargetLanguage) ? FlowDirection.RightToLeft : FlowDirection.LeftToRight;
         _detected.Text = $"{Languages.NameOf(entry.SourceLanguage)} → {Languages.NameOf(entry.TargetLanguage)}";
-        _resultCard.Visibility = Visibility.Visible;
-        UpdateBottom();
+        _translatedText = _sourceBox.Text.Trim();
+        _resultSection.Visibility = Visibility.Visible;
+        UpdateSections();
     }
 
     private void PlaceNearAnchor()
@@ -377,19 +390,25 @@ public sealed class TranslatorWindow : FluentWindow
         int gap = (int)(18 * scale);
         int x = _anchor.X - r.Width / 2;
         int y = _anchor.Y + gap;
-        if (y + r.Height > work.Bottom) y = Math.Max(work.Top, _anchor.Y - gap - r.Height);
+        _placedAbove = y + r.Height > work.Bottom;
+        if (_placedAbove) y = Math.Max(work.Top, _anchor.Y - gap - r.Height);
         x = Math.Clamp(x, work.Left + 8, Math.Max(work.Left + 8, work.Right - r.Width - 8));
         y = Math.Clamp(y, work.Top + 8, Math.Max(work.Top + 8, work.Bottom - r.Height - 8));
         Native.SetWindowPos(_hwnd, Native.HWND_TOPMOST, x, y, 0, 0, Native.SWP_NOSIZE | Native.SWP_NOACTIVATE);
     }
 
-    /// <summary>When the window grows (translation arrived), move it up if it would leave the screen.</summary>
+    /// <summary>
+    /// When the window changes height (the translation arrived): above the selection it grows upward,
+    /// so it never covers the text; below it, it moves up only if it would leave the screen.
+    /// </summary>
     private void KeepOnScreen()
     {
         if (!IsVisible || _hwnd == IntPtr.Zero || !Native.GetWindowRect(_hwnd, out var r)) return;
         var work = WindowInfo.WorkAreaAt(new Native.POINT(r.Left + r.Width / 2, r.Top + 10));
         int y = r.Top;
-        if (r.Bottom > work.Bottom - 8) y = Math.Max(work.Top + 8, work.Bottom - 8 - r.Height);
+        if (_placedAbove) y = _anchor.Y - (int)(18 * WindowInfo.ScaleAt(_anchor)) - r.Height;
+        if (y + r.Height > work.Bottom - 8) y = work.Bottom - 8 - r.Height;
+        y = Math.Max(work.Top + 8, y);
         if (y != r.Top) Native.SetWindowPos(_hwnd, Native.HWND_TOPMOST, r.Left, y, 0, 0, Native.SWP_NOSIZE | Native.SWP_NOACTIVATE);
     }
 
@@ -469,7 +488,10 @@ public sealed class TranslatorWindow : FluentWindow
         var cts = _cts = new CancellationTokenSource();
         var source = _sourcePicker.Code;
         var target = _targetPicker.Code;
-        SetStatus("Translating…");
+        _translatedText = text;
+        UpdateTranslateButton();
+        SetStatus("");
+        SetBusy(true);
 
         try
         {
@@ -518,12 +540,16 @@ public sealed class TranslatorWindow : FluentWindow
             Log.Error("Translation failed", ex);
             if (!cts.IsCancellationRequested) SetStatus("Something went wrong while translating.", error: true);
         }
+        finally
+        {
+            if (_cts == cts) SetBusy(false);
+        }
     }
 
     private void ShowResult(TranslationResult result, bool usedFallback, string requestedTarget)
     {
         _last = result;
-        _resultCard.Visibility = Visibility.Visible;
+        _resultSection.Visibility = Visibility.Visible;
         _resultBox.Text = result.Translation;
         _resultBox.FlowDirection = Languages.IsRightToLeft(result.TargetLanguage) ? FlowDirection.RightToLeft : FlowDirection.LeftToRight;
 
@@ -569,7 +595,7 @@ public sealed class TranslatorWindow : FluentWindow
         _dictionaryPanel.Children.Clear();
         _dictionaryPanel.Visibility = Visibility.Collapsed;
         _secondCard.Visibility = Visibility.Collapsed;
-        _resultCard.Visibility = Visibility.Collapsed;
+        _resultSection.Visibility = Visibility.Collapsed;
         SetStatus("");
     }
 
@@ -597,18 +623,62 @@ public sealed class TranslatorWindow : FluentWindow
         _status.Text = text;
         _status.ToolTip = string.IsNullOrEmpty(text) ? null : text;
         _statusIsError = error;
-        if (error) _status.Foreground = new SolidColorBrush(ThemeHelper.IsDark ? Color.FromRgb(0xFF, 0x99, 0xA4) : Color.FromRgb(0xC4, 0x2B, 0x1C));
-        else _status.SetResourceReference(TextBlock.ForegroundProperty, "Adawat.Muted");
-        _footer.Visibility = text.Length > 0 || T.ShowOpenInGoogle ? Visibility.Visible : Visibility.Collapsed;
-        UpdateBottom();
+        _status.SetResourceReference(TextBlock.ForegroundProperty, error ? "Adawat.Error" : "Adawat.Muted");
+        UpdateSections();
     }
 
-    /// <summary>The tinted lower half only shows when it has something: a translation, a message or the link.</summary>
-    private void UpdateBottom()
+    /// <summary>
+    /// Shows only what has something to show: the hairline and the translation once there is one
+    /// (or one is on its way), the footer when there is a message or the Google link.
+    /// </summary>
+    private void UpdateSections()
     {
-        bool result = _resultCard.Visibility == Visibility.Visible;
-        _bottom.Visibility = result || _footer.Visibility == Visibility.Visible ? Visibility.Visible : Visibility.Collapsed;
-        _footer.Margin = new Thickness(0, result ? 10 : 0, 0, 0);
+        bool result = _resultSection.Visibility == Visibility.Visible;
+        _divider.Visibility = result || _busy ? Visibility.Visible : Visibility.Collapsed;
+        _footer.Visibility = _status.Text.Length > 0 || T.ShowOpenInGoogle ? Visibility.Visible : Visibility.Collapsed;
+        _footer.Margin = new Thickness(18, result || _busy ? 10 : 0, 18, 12);
+    }
+
+    /// <summary>The thin bar sliding along the hairline while a translation is on its way.</summary>
+    private void SetBusy(bool busy)
+    {
+        if (_busy == busy) return;
+        _busy = busy;
+        var move = (TranslateTransform)_progressBar.RenderTransform;
+        if (busy)
+        {
+            _progressBar.Visibility = Visibility.Visible;
+            double width = Math.Max(200, ActualWidth - 36);
+            var slide = new System.Windows.Media.Animation.DoubleAnimation(-_progressBar.Width, width, TimeSpan.FromMilliseconds(900))
+            {
+                RepeatBehavior = System.Windows.Media.Animation.RepeatBehavior.Forever,
+                EasingFunction = new System.Windows.Media.Animation.SineEase { EasingMode = System.Windows.Media.Animation.EasingMode.EaseInOut },
+                BeginTime = TimeSpan.FromMilliseconds(150), // quick translations never show it
+            };
+            move.BeginAnimation(TranslateTransform.XProperty, slide);
+        }
+        else
+        {
+            move.BeginAnimation(TranslateTransform.XProperty, null);
+            _progressBar.Visibility = Visibility.Collapsed;
+        }
+        UpdateSections();
+    }
+
+    /// <summary>"Translate" only shows while the text has changed since it was last translated.</summary>
+    private void UpdateTranslateButton()
+    {
+        var text = _sourceBox.Text.Trim();
+        _translateButton.Visibility = text.Length > 0 && text != _translatedText ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>The window is exactly as tall as its content (up to the screen height).</summary>
+    private void FitHeight(FrameworkElement content)
+    {
+        double height = Math.Ceiling(content.ActualHeight);
+        if (height <= 0) return;
+        height = Math.Min(MaxHeight, height);
+        if (Math.Abs(Height - height) > 0.5) Height = height;
     }
 
     // ---- Actions -----------------------------------------------------------------------

@@ -141,17 +141,12 @@ public sealed class TranslatorService : IDisposable
         _lastClickY = e.Y;
 
         int distance = Math.Abs(e.X - _downX) + Math.Abs(e.Y - _downY);
-        bool dragged = distance >= 8 && e.TimestampMs - _downTime >= 100;
+        // A quick flick across a word is still a selection; only the distance tells a drag from a click.
+        bool dragged = distance >= 8 && e.TimestampMs - _downTime >= 40;
         bool doubleClick = _clickCount >= 2;
         if (!dragged && !doubleClick)
         {
             if (distance >= 8) Explain("the drag was too quick to be a selection");
-            return;
-        }
-        // A selection often starts just beside the text (arrow pointer) and ends on it, or the other way round.
-        if (T.OnlyOverText && !_downOnText && !e.IsTextCursor)
-        {
-            Explain("the pointer was not over text when pressing or releasing (see \"Only when selecting text\")");
             return;
         }
         if (!ModifierSatisfied())
@@ -159,6 +154,9 @@ public sealed class TranslatorService : IDisposable
             Explain($"{T.SelectionModifier} was not held");
             return;
         }
+        // The text cursor showed when pressing, releasing or somewhere along the drag. If it never did
+        // (a selection dragged entirely through the margins), ask the app whether text is selected.
+        bool overText = !T.OnlyOverText || _downOnText || e.IsTextCursor;
 
         var point = new Native.POINT(e.X, e.Y);
         _dispatcher.BeginInvoke(DispatcherPriority.Background, async () =>
@@ -173,6 +171,11 @@ public sealed class TranslatorService : IDisposable
             }
 
             await Task.Delay(80); // let the app finish updating its selection
+            if (!overText && !await SelectionProbe.HasSelectedTextAsync(TimeSpan.FromMilliseconds(400)))
+            {
+                Explain("the pointer was not over text and the app reports no selected text (see \"Only when selecting text\")");
+                return;
+            }
             if (T.OnSelection == SelectionBehavior.TranslateInstantly)
             {
                 await CaptureAndShowAsync(point, allowEmpty: false);

@@ -25,7 +25,8 @@ public static class InputSender
     private static readonly HashSet<ushort> ExtendedKeys = new()
     {
         0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x2D, 0x2E, // PgUp..Down, Insert, Delete
-        VK_RCONTROL, VK_RMENU, VK_LWIN, VK_RWIN, 0x6F, 0x90,
+        VK_RCONTROL, VK_RMENU, VK_LWIN, VK_RWIN, 0x5D, 0x6F, 0x90,
+        0xAD, 0xAE, 0xAF, 0xB0, 0xB1, 0xB2, 0xB3,
         VK_BROWSER_BACK, VK_BROWSER_FORWARD, 0xA8, 0xA9, 0xAA, 0xAB, 0xAC,
     };
 
@@ -82,6 +83,9 @@ public static class InputSender
         }
     }
 
+    /// <summary>Presses or releases one key (used by the key changes).</summary>
+    public static void SendKey(ushort key, bool up) => Send(Key(key, up));
+
     public static void Chord(ushort modifier, ushort key) =>
         Send(Key(modifier, false), Key(key, false), Key(key, true), Key(modifier, true));
 
@@ -94,6 +98,10 @@ public static class InputSender
         uint button = forward ? XBUTTON2 : XBUTTON1;
         Send(Mouse(MOUSEEVENTF_XDOWN, button), Mouse(MOUSEEVENTF_XUP, button));
     }
+
+    /// <summary>Scrolls the window under the pointer (120 = one notch; smaller steps scroll smoothly).</summary>
+    public static void Wheel(int delta, bool horizontal) =>
+        Send(Mouse(horizontal ? MOUSEEVENTF_HWHEEL : MOUSEEVENTF_WHEEL, unchecked((uint)delta)));
 
     public static void CtrlWheel(int delta) =>
         Send(Key(VK_CONTROL, false), Mouse(MOUSEEVENTF_WHEEL, unchecked((uint)delta)), Key(VK_CONTROL, true));

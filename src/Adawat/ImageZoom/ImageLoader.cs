@@ -34,7 +34,9 @@ public static class ImageLoader
     {
         var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
         client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36");
-        client.DefaultRequestHeaders.Accept.ParseAdd("image/avif,image/webp,image/png,image/*;q=0.8,*/*;q=0.5");
+        // No AVIF: Windows often cannot open it (it needs an extra Store extension), and servers that
+        // were offered it sent it, which made the picture fall back to a blurry copy of the screen.
+        client.DefaultRequestHeaders.Accept.ParseAdd("image/webp,image/png,image/jpeg,image/gif;q=0.9,image/*;q=0.5");
         return client;
     }
 
@@ -49,13 +51,32 @@ public static class ImageLoader
             }
             if (hit.Url != null)
             {
-                var bytes = await DownloadAsync(hit.Url, cancel);
-                if (bytes != null)
+                // The page shows a small version: try the full-size addresses first, then the one shown.
+                LoadedImage? best = null;
+                foreach (var url in ImageZoomLogic.FullSizeCandidates(hit.Url))
                 {
-                    var name = ImageZoomLogic.SuggestedFileName(hit.Url, ".png", DateTime.Now);
+                    cancel.ThrowIfCancellationRequested();
+                    byte[]? bytes;
+                    try
+                    {
+                        bytes = await DownloadAsync(url, cancel);
+                    }
+                    catch (HttpRequestException ex)
+                    {
+                        Log.Info($"Picture zoom could not download {Short(url)}: {ex.Message}");
+                        continue;
+                    }
+                    if (bytes == null) continue;
+                    var name = ImageZoomLogic.SuggestedFileName(url, ".jpg", DateTime.Now);
                     var image = await Task.Run(() => Decode(bytes, name), cancel);
-                    if (image != null) return image;
+                    if (image == null) continue;
+                    if (best == null || image.PixelWidth * image.PixelHeight > best.PixelWidth * best.PixelHeight) best = image;
+                    // Clearly bigger than on screen: that is the picture to show.
+                    if (image.PixelWidth >= hit.Bounds.Width * 1.15 || image.PixelHeight >= hit.Bounds.Height * 1.15) return image;
                 }
+                // About as big as on screen: the real picture, nothing more to get. Much smaller (a
+                // placeholder of a picture that loads later): use what the screen shows instead.
+                if (best != null && (best.PixelWidth >= hit.Bounds.Width * 0.9 || best.PixelHeight >= hit.Bounds.Height * 0.9)) return best;
             }
         }
         catch (OperationCanceledException)
@@ -78,12 +99,19 @@ public static class ImageLoader
             if (comma < 0 || !url[..comma].EndsWith(";base64", StringComparison.OrdinalIgnoreCase)) return null;
             return Convert.FromBase64String(url[(comma + 1)..]);
         }
-        using var response = await Http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancel);
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        // Some picture servers only answer requests that seem to come from their own pages.
+        if (Uri.TryCreate(url, UriKind.Absolute, out var uri)) request.Headers.Referrer = new Uri(uri.GetLeftPart(UriPartial.Authority) + "/");
+        using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancel);
         if (!response.IsSuccessStatusCode) return null;
+        var type = response.Content.Headers.ContentType?.MediaType;
+        if (type != null && !type.StartsWith("image/", StringComparison.OrdinalIgnoreCase) && type != "application/octet-stream") return null;
         if (response.Content.Headers.ContentLength > MaxBytes) return null;
         var bytes = await response.Content.ReadAsByteArrayAsync(cancel);
         return bytes.Length > MaxBytes ? null : bytes;
     }
+
+    private static string Short(string url) => url.Length > 90 ? url[..90] + "…" : url;
 
     /// <summary>Decodes a picture (any format Windows can read), turned upright as the camera recorded it.</summary>
     private static LoadedImage? Decode(byte[] bytes, string fileName)

@@ -27,6 +27,8 @@ public sealed class ImageZoomService : IDisposable
 
     private Native.POINT _lastPos;
     private Native.POINT? _lastLookup;
+    private long _lookupMs;
+    private bool _retried;
     private long _restSince;
     private bool _looking;
     private ImageHit? _hit;          // the picture being loaded or shown
@@ -71,7 +73,17 @@ public sealed class ImageZoomService : IDisposable
             return;
         }
         if (_looking || now - _restSince < Math.Clamp(S.HoverDelayMs, 0, 3000)) return;
-        if (_lastLookup is { } last && last.X == p.X && last.Y == p.Y) return;
+        if (_lastLookup is { } last && last.X == p.X && last.Y == p.Y)
+        {
+            // Browsers build their accessibility tree only when first asked, so the first look often
+            // finds nothing: look once more a moment later instead of waiting for the pointer to move.
+            if (_retried || now - _lookupMs < 700) return;
+            _retried = true;
+        }
+        else
+        {
+            _retried = false;
+        }
         if (!ModifierHeld() || ButtonDown()) return;
 
         var root = WindowInfo.RootWindowAt(p);
@@ -80,6 +92,7 @@ public sealed class ImageZoomService : IDisposable
         if (S.DisableInFullscreen && !ImageFinder.IsDesktop(root) && WindowInfo.IsFullscreenAppRunning()) return;
 
         _lastLookup = p;
+        _lookupMs = now;
         _ = LookAsync(p);
     }
 
@@ -123,15 +136,20 @@ public sealed class ImageZoomService : IDisposable
         double dpi = WindowInfo.ScaleAt(cursor);
         var work = WindowInfo.WorkAreaAt(cursor);
         var chrome = ImagePreviewWindow.ChromeDip;
-        // Real pictures are shown at most at real size; screen captures may be enlarged up to 3x.
-        double maxScale = image.IsScreenCapture ? 3 : 1;
+        // Real pictures are shown at most at real size. A copy of the screen (no address for the real
+        // picture) only up to 2x: more than that is too blurry to be worth it.
+        double maxScale = image.IsScreenCapture ? 2 : 1;
         var layout = ImageZoomLogic.Place(image.PixelWidth, image.PixelHeight, maxScale,
             new PixelRect(work.Left, work.Top, work.Width, work.Height), cursor.X, cursor.Y,
             ((int)Math.Round(chrome.Width * dpi), (int)Math.Round(chrome.Height * dpi)), (int)Math.Round(12 * dpi));
 
         // Nothing to gain if the preview would not be clearly bigger than the picture on screen.
         double shownW = image.PixelWidth * layout.Scale, shownH = image.PixelHeight * layout.Scale;
-        if (shownW < hit.Bounds.Width * 1.15 && shownH < hit.Bounds.Height * 1.15) return;
+        if (shownW < hit.Bounds.Width * 1.15 && shownH < hit.Bounds.Height * 1.15)
+        {
+            Log.Info($"Picture zoom: the full picture ({image.PixelWidth}×{image.PixelHeight}) is no bigger than on screen; nothing to enlarge");
+            return;
+        }
 
         _image = image;
         _window ??= new ImagePreviewWindow();

@@ -51,6 +51,7 @@ public sealed class SettingsWindow : FluentWindow
             ("Text from screen", SymbolRegular.ScanText24, BuildOcr),
             ("Touchpad gestures", SymbolRegular.SwipeRight24, BuildGestures),
             ("Picture zoom", SymbolRegular.ImageSearch24, BuildImageZoom),
+            ("Change keys", SymbolRegular.Keyboard24, BuildKeyChanges),
             ("History", SymbolRegular.History24, BuildHistory),
             ("About", SymbolRegular.Info24, BuildAbout),
         };
@@ -355,6 +356,10 @@ public sealed class SettingsWindow : FluentWindow
                 [SwipeAction.AltArrows] = "Alt + ← / →",
                 [SwipeAction.BrowserKeys] = "Browser back/forward keys",
             }, v => { g.SwipeAction = v; Changed(); })));
+        p.Children.Add(Ui.Card(SymbolRegular.Prohibited24, "Only when there is somewhere to go",
+            "If the app's own back (or forward) button is greyed out, the swipe does nothing and no arrow shows. " +
+            "Apps without a visible back button keep working as before.",
+            Ui.Toggle(g.SwipeOnlyWhenPossible, v => { g.SwipeOnlyWhenPossible = v; Changed(); })));
         p.Children.Add(Ui.Card(SymbolRegular.ArrowCircleLeft24, "Show the arrow while swiping", null,
             Ui.Toggle(g.ShowSwipeArrow, v => { g.ShowSwipeArrow = v; Changed(); })));
         p.Children.Add(AppListCard("Apps where swiping does nothing", "Browsers already have this gesture, so they are listed by default.",
@@ -376,10 +381,11 @@ public sealed class SettingsWindow : FluentWindow
 
         if (g.PinchAction == PinchAction.ScreenZoom)
         {
-            p.Children.Add(Ui.Card(SymbolRegular.Gauge24, "Zoom speed", "How fast the screen zooms as your fingers move.",
-                SliderRow(1, 100, g.PinchSensitivity, v => $"{v:0}", v => { g.PinchSensitivity = (int)Math.Round(v); Changed(); })));
-            p.Children.Add(Ui.Card(SymbolRegular.ZoomIn24, "Maximum zoom", null,
-                SliderRow(2, 10, g.MaxScreenZoom, v => $"{v:0}x", v => { g.MaxScreenZoom = Math.Round(v); Changed(); })));
+            p.Children.Add(Ui.Card(SymbolRegular.Gauge24, "Zoom speed",
+                "How fast the screen zooms as your fingers spread. Lower is slower and easier to control; 1 is very slow.",
+                SliderRow(1, 100, g.ScreenZoomSpeed, v => $"{v:0}", v => { g.ScreenZoomSpeed = (int)Math.Round(v); Changed(); })));
+            p.Children.Add(Ui.Card(SymbolRegular.ZoomIn24, "Maximum zoom", "How far you can zoom in, from a little (1.25x) to a lot (10x).",
+                SliderRow(1.25, 10, g.MaxScreenZoom, v => $"{Math.Round(v * 4) / 4:0.##}x", v => { g.MaxScreenZoom = Math.Round(v * 4) / 4; Changed(); })));
             p.Children.Add(Ui.Card(SymbolRegular.Eye24, "Picture",
                 "Smooth edges (recommended) blends the enlarged pixels, like Windows Magnifier, and stays steady while zooming. " +
                 "Blocky shows every screen pixel as a square, which flickers while the zoom changes.",
@@ -390,8 +396,12 @@ public sealed class SettingsWindow : FluentWindow
                 Ui.Toggle(g.SnapZoomLevels, v => { g.SnapZoomLevels = v; Changed(); })));
             p.Children.Add(Ui.Card(SymbolRegular.ArrowMove24, "Moving around while zoomed",
                 "While zoomed, slide two fingers in any direction to move the zoomed view, like in Chrome. " +
-                "The app underneath does not scroll and back/forward swipes pause until you zoom out.",
+                "Back/forward swipes pause until you zoom out.",
                 SliderRow(1, 100, g.PanSpeed, v => $"{v:0}", v => { g.PanSpeed = (int)Math.Round(v); Changed(); })));
+            p.Children.Add(Ui.Card(SymbolRegular.ArrowSortDown24, "Keep scrolling at the edge",
+                "Like Chrome: once the zoomed view reaches the edge of the screen, keep sliding and the page itself scrolls on. " +
+                "Off: the view stops at the edge.",
+                Ui.Toggle(g.ScrollPastZoomEdges, v => { g.ScrollPastZoomEdges = v; Changed(); })));
             p.Children.Add(Ui.Card(SymbolRegular.ArrowSwap24, "Reverse moving direction", "Off: the picture follows your fingers, like Chrome.",
                 Ui.Toggle(g.InvertPan, v => { g.InvertPan = v; Changed(); })));
 
@@ -451,7 +461,7 @@ public sealed class SettingsWindow : FluentWindow
                 [SelectionModifier.Shift] = "Shift",
             }, v => { z.Modifier = v; Changed(); })));
         p.Children.Add(Ui.Card(SymbolRegular.ResizeSmall24, "Ignore small pictures", "Icons and pictures smaller than this are left alone.",
-            SliderRow(24, 200, z.MinSize, v => $"{v:0} px", v => { z.MinSize = (int)Math.Round(v); Changed(); })));
+            SliderRow(16, 200, z.MinSize, v => $"{v:0} px", v => { z.MinSize = (int)Math.Round(v); Changed(); })));
         p.Children.Add(Ui.Card(SymbolRegular.ScreenSearch24, "Enlarge pictures from the screen",
             "Picture files and pictures that link to their full size open at full quality. For other pictures (most web pages) " +
             "Adawat can only enlarge what is on screen, which is less sharp. Turn off to open only full-quality pictures.",
@@ -460,6 +470,145 @@ public sealed class SettingsWindow : FluentWindow
             Ui.Toggle(z.DisableInFullscreen, v => { z.DisableInFullscreen = v; Changed(); })));
         p.Children.Add(AppListCard("Apps where picture zoom is off", "One program per line, e.g. photoshop.exe", z.DisabledApps, v => { z.DisabledApps = v; Changed(); }));
         return p;
+    }
+
+    private UIElement BuildKeyChanges()
+    {
+        var k = S.KeyChanges;
+        var p = new StackPanel();
+        p.Children.Add(Ui.Card(SymbolRegular.Keyboard24, "Change keys",
+            "Make one key act as another, in every app. For example, swap Left Ctrl and Left Alt: then copy is Alt + C, " +
+            "paste is Alt + V, and the key next to the space bar does what Ctrl does.",
+            Ui.Toggle(k.Enabled, v => { k.Enabled = v; Changed(); })));
+
+        p.Children.Add(Ui.SectionTitle("Your key changes"));
+        var list = new StackPanel();
+
+        void Save()
+        {
+            Changed();
+            Fill();
+        }
+
+        void Fill()
+        {
+            list.Children.Clear();
+            if (k.Remaps.Count == 0)
+            {
+                var empty = Ui.Card(SymbolRegular.Info24, "No key changes yet",
+                    "Add one below, or use \"Swap Ctrl and Alt\". Click a key box, then press the key on your keyboard.", null);
+                list.Children.Add(empty);
+            }
+            foreach (var remap in k.Remaps.ToList())
+            {
+                var from = KeyPicker(remap.From, allowOff: false, v => { remap.From = v; Save(); });
+                var to = KeyPicker(remap.To, allowOff: true, v => { remap.To = v; Save(); });
+                var arrow = Ui.Icon(SymbolRegular.ArrowRight24, 16);
+                arrow.Margin = new Thickness(10, 0, 10, 0);
+                arrow.VerticalAlignment = VerticalAlignment.Center;
+                var remove = Ui.IconButton(SymbolRegular.Delete24, "Remove this change", () => { k.Remaps.Remove(remap); Save(); });
+                remove.Margin = new Thickness(12, 0, 0, 0);
+                var toggle = Ui.Toggle(remap.Enabled, v => { remap.Enabled = v; Changed(); });
+                toggle.Margin = new Thickness(0, 0, 16, 0);
+                toggle.ToolTip = "Turn this change on or off";
+                var row = new StackPanel { Orientation = Orientation.Horizontal };
+                row.Children.Add(toggle);
+                row.Children.Add(from);
+                row.Children.Add(arrow);
+                row.Children.Add(to);
+                row.Children.Add(remove);
+                string title = remap.From == 0 ? "New key change" : $"{KeyChanges.KeyNames.Name(remap.From)} works as {KeyChanges.KeyNames.Name(remap.To)}";
+                list.Children.Add(Ui.Card(SymbolRegular.ArrowSwap24, title, null, row));
+            }
+        }
+        Fill();
+        p.Children.Add(list);
+
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
+        var add = Ui.Button("Add a key change", () =>
+        {
+            k.Remaps.Add(new KeyRemap { From = 0, To = 0, Enabled = true });
+            Fill();
+        }, primary: true, icon: SymbolRegular.Add24);
+        var swap = Ui.Button("Swap Ctrl and Alt", () =>
+        {
+            k.Remaps.RemoveAll(r => r.From is 0xA2 or 0xA4);
+            k.Remaps.Add(new KeyRemap { From = 0xA4, To = 0xA2 }); // Left Alt  -> Left Ctrl
+            k.Remaps.Add(new KeyRemap { From = 0xA2, To = 0xA4 }); // Left Ctrl -> Left Alt
+            k.Enabled = true;
+            Save();
+            ShowPage("Change keys");
+        }, icon: SymbolRegular.ArrowSwap24);
+        swap.Margin = new Thickness(8, 0, 0, 0);
+        buttons.Children.Add(add);
+        buttons.Children.Add(swap);
+        p.Children.Add(buttons);
+
+        p.Children.Add(Ui.SectionTitle("Good to know"));
+        p.Children.Add(Ui.Card(SymbolRegular.Info24, "What changes",
+            "Only the key itself changes, so every shortcut with it follows: with Left Alt working as Left Ctrl, Alt + C copies, " +
+            "Alt + Z undoes and Alt + Tab becomes Ctrl + Tab. Adawat's own shortcuts (like " + S.Translator.TranslateHotkey + ") follow too. " +
+            "Ctrl + Alt + Delete and Windows + L always keep their meaning.", null));
+        p.Children.Add(Ui.Card(SymbolRegular.ShieldKeyhole24, "Apps that run as administrator",
+            "Windows only lets the changes reach apps running as administrator (Task Manager, installers) when Adawat runs as administrator too. Turn it on in General.", null));
+        p.Children.Add(AppListCard("Apps where keys are not changed", "Games or remote desktop, for example. One program per line, e.g. mstsc.exe",
+            k.DisabledApps, v => { k.DisabledApps = v; Changed(); }));
+        return p;
+    }
+
+    /// <summary>A box showing a key; click it, then press a key on the keyboard to choose another.</summary>
+    private Button KeyPicker(int value, bool allowOff, Action<int> changed)
+    {
+        var button = new Button { MinWidth = 150, Appearance = ControlAppearance.Secondary, Icon = Ui.Icon(SymbolRegular.Keyboard24) };
+        bool waiting = false;
+        void Show() => button.Content = waiting ? "Press a key…" : value == 0 && !allowOff ? "Choose a key" : KeyChanges.KeyNames.Name(value);
+        Show();
+        button.ToolTip = allowOff
+            ? "Click, then press the key it should act as. Right-click to turn the key off."
+            : "Click, then press the key to change.";
+        button.Click += (_, _) =>
+        {
+            if (waiting)
+            {
+                waiting = false;
+                _host.KeyChanges.CancelCapture();
+                Show();
+                return;
+            }
+            waiting = true;
+            Show();
+            _host.KeyChanges.CaptureNextKey(vk =>
+            {
+                waiting = false;
+                value = vk;
+                Show();
+                changed(vk);
+            });
+        };
+        button.LostKeyboardFocus += (_, _) =>
+        {
+            if (!waiting) return;
+            waiting = false;
+            _host.KeyChanges.CancelCapture();
+            Show();
+        };
+        var menu = new ContextMenu();
+        var pick = new System.Windows.Controls.MenuItem { Header = "Choose from a list" };
+        foreach (var (key, name) in KeyChanges.KeyNames.All)
+        {
+            var item = new System.Windows.Controls.MenuItem { Header = name };
+            item.Click += (_, _) => { value = key; Show(); changed(key); };
+            pick.Items.Add(item);
+        }
+        menu.Items.Add(pick);
+        if (allowOff)
+        {
+            var off = new System.Windows.Controls.MenuItem { Header = "Turn the key off (does nothing)" };
+            off.Click += (_, _) => { value = 0; Show(); changed(0); };
+            menu.Items.Add(off);
+        }
+        button.ContextMenu = menu;
+        return button;
     }
 
     private UIElement BuildHistory()
@@ -653,7 +802,7 @@ public sealed class SettingsWindow : FluentWindow
     private static UIElement SliderRow(double min, double max, double value, Func<double, string> format, Action<double> changed)
     {
         var label = Ui.Text(format(value), 13, secondary: true);
-        label.Width = 44;
+        label.Width = 52;
         label.TextAlignment = TextAlignment.Right;
         label.VerticalAlignment = VerticalAlignment.Center;
         var slider = new Slider { Minimum = min, Maximum = max, Value = Math.Clamp(value, min, max), Width = 220, VerticalAlignment = VerticalAlignment.Center };

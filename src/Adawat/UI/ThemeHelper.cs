@@ -202,6 +202,13 @@ public static class ThemeHelper
         var wash = new LinearGradientBrush(top, bottom, 90);
         wash.Freeze();
         resources["Adawat.Wash"] = wash;
+
+        // The same color, see-through, laid over the frosted-glass backdrop: what is behind the
+        // window shows through softly blurred, still clearly in the accent color.
+        static Color Alpha(Color c, double opacity) => Color.FromArgb((byte)Math.Round(255 * opacity), c.R, c.G, c.B);
+        var glass = new LinearGradientBrush(Alpha(top, dark ? 0.74 : 0.66), Alpha(bottom, dark ? 0.66 : 0.56), 90);
+        glass.Freeze();
+        resources["Adawat.WashGlass"] = glass;
     }
 
     /// <summary>The palette color for a key (see <see cref="ApplyPalette"/>), for code that needs a raw color.</summary>

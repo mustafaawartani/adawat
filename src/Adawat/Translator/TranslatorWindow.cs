@@ -83,9 +83,10 @@ public sealed class TranslatorWindow : FluentWindow
 
         Title = "Adawat Translator";
         Icon = AppIcon.ImageSource;
-        // One solid surface: no see-through glass (it turned grey whenever the window was not
-        // in front, and showed through as an empty grey area under the content).
-        WindowBackdropType = WindowBackdropType.None;
+        // Frosted glass where Windows supports it (11 22H2 and later), tinted with the accent;
+        // solid color elsewhere. (The glass once showed as an empty grey area at the bottom: that
+        // was the minimum height below, not the glass.)
+        WindowBackdropType = ThemeHelper.GlassSupported ? WindowBackdropType.Acrylic : WindowBackdropType.None;
         WindowCornerPreference = WindowCornerPreference.Round;
         ExtendsContentIntoTitleBar = true;
         ResizeMode = ResizeMode.NoResize;
@@ -101,7 +102,7 @@ public sealed class TranslatorWindow : FluentWindow
         MaxHeight = 760;
         FontFamily = new FontFamily(Ui.FontFamilyName);
         ApplyTheme();
-        SetResourceReference(BackgroundProperty, "Adawat.Wash");
+        Background = Brushes.Transparent; // the colored layer is drawn by the content (see below)
 
         // ---- Header: from / swap / to on the left, window buttons on the right -----------
         var swap = PopupUi.IconButton(SymbolRegular.ArrowSwap20, "Swap languages", Swap, 15, brush: "AccentText");
@@ -255,7 +256,10 @@ public sealed class TranslatorWindow : FluentWindow
             Focusable = false,
         };
         root.SizeChanged += (_, _) => FitHeight(root);
-        Content = scroller;
+        // The color of the whole window: see-through over the glass, solid without it.
+        var tint = new Border { Child = scroller };
+        tint.SetResourceReference(Border.BackgroundProperty, ThemeHelper.GlassSupported ? "Adawat.WashGlass" : "Adawat.Wash");
+        Content = tint;
 
         _typingTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(750) };
         _typingTimer.Tick += (_, _) =>
@@ -302,6 +306,8 @@ public sealed class TranslatorWindow : FluentWindow
         {
             ApplyTheme();
             ApplyBorderColor();
+            // The glass follows light/dark only when applied again.
+            if (ThemeHelper.GlassSupported && _hwnd != IntPtr.Zero) WindowBackdrop.ApplyBackdrop(this, WindowBackdropType.Acrylic);
             if (_statusIsError) SetStatus(_status.Text, error: true);
         };
     }

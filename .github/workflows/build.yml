@@ -9,6 +9,12 @@ on:
 permissions:
   contents: write
 
+# Builds of main run one after another, so an older build can never finish last and be
+# marked as the latest release.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   VERSION: 0.1.${{ github.run_number }}
 

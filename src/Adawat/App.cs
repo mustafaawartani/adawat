@@ -78,6 +78,7 @@ public sealed class App : Application, IAppHost
         Resources.MergedDictionaries.Add(new ThemesDictionary { Theme = ApplicationTheme.Light });
         Resources.MergedDictionaries.Add(new ControlsDictionary());
         ThemeHelper.Initialize(Settings.Theme, Settings.Accent);
+        WheelScrolling.Register();
 
         _messages = new MessageWindow();
         Hotkeys = new HotkeyManager(_messages);

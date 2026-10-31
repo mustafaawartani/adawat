@@ -44,7 +44,7 @@ All shortcuts and behaviors can be changed in the settings (click the tray icon 
 - Gestures: fingers (2/3/4), sensitivity, direction, how to go back (mouse back button, Alt+arrows, browser keys), arrow animation, per-app lists, pause in full-screen games. A swipe does nothing (and shows no arrow) when the app's own back/forward button is greyed out.
 - Pinch: screen zoom like Chrome (zoom speed from very slow to fast, maximum zoom from 1.25x to 10x, keep scrolling at the edge, smooth edges or blocky pixels, optional settling on whole zoom levels) or app zoom (Ctrl+wheel, Ctrl+Plus/Minus). While your fingers are on the touchpad over an app where the screen zoom works, Windows' own pinch (icon and text size) is paused for that moment; your Windows setting is never changed, and apps in the "pinching does nothing" list keep their own pinch.
 - Picture zoom: save/copy shortcuts (only taken while a preview is open, with a notification at the bottom of the screen when done), delay, only while holding a key, minimum size, per-app list. The log notes why a picture did not open.
-- Change keys: any key to any other key (or off), a one-click "Swap Ctrl and Alt", per-app list. Click a key box and press the key, even Windows, Alt or Caps Lock.
+- Change keys: any key to any other key (or off), a one-click "Swap Ctrl and Alt", per-app list. Click a key box and press the key, even Windows, Alt or Caps Lock. When Alt works as Ctrl, chosen Alt shortcuts stay Alt shortcuts (Alt + Tab, Alt + F4, Alt + Esc and Alt + Space by default; also Alt + Shift, arrows, Enter, numbers or letters).
 - Run as administrator (so the tools also work in admin windows), theme (light/dark/system) and accent color, start with Windows.
 
 ## How it works

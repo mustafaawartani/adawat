@@ -86,6 +86,14 @@ public static class InputSender
     /// <summary>Presses or releases one key (used by the key changes).</summary>
     public static void SendKey(ushort key, bool up) => Send(Key(key, up));
 
+    /// <summary>Several key presses/releases in one go, so nothing can come in between.</summary>
+    public static void SendKeys(IReadOnlyList<Adawat.KeyChanges.KeyEvent> keys)
+    {
+        var inputs = new INPUT[keys.Count];
+        for (int i = 0; i < keys.Count; i++) inputs[i] = Key((ushort)keys[i].Key, keys[i].Up);
+        Send(inputs);
+    }
+
     public static void Chord(ushort modifier, ushort key) =>
         Send(Key(modifier, false), Key(key, false), Key(key, true), Key(modifier, true));
 

@@ -45,13 +45,14 @@ public sealed class LanguagePicker : Grid
         content.Children.Add(chevron);
         _button = new Border
         {
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(10, 6, 8, 6),
+            CornerRadius = new CornerRadius(16),
+            Padding = new Thickness(12, 5, 10, 6),
             Background = Brushes.Transparent,
             Child = content,
             Cursor = Cursors.Hand,
         };
-        PopupUi.MakeClickable(_button, Open, hoverBrush: "Hover");
+        _button.SetResourceReference(Border.BackgroundProperty, "Adawat.AccentChip");
+        PopupUi.MakeClickable(_button, Open, hoverBrush: "AccentChipHover", restBrush: () => "AccentChip");
         Children.Add(_button);
 
         // ---- The drop-down ---------------------------------------------------------------
@@ -144,6 +145,12 @@ public sealed class LanguagePicker : Grid
         {
             if (ItemFrom(e.OriginalSource as DependencyObject) is { } item) Pick(item);
         };
+    }
+
+    /// <summary>The language translated to: its name in the accent color.</summary>
+    public bool Strong
+    {
+        set => _label.SetResourceReference(System.Windows.Controls.TextBlock.ForegroundProperty, value ? "Adawat.AccentText" : "Adawat.Text");
     }
 
     public bool IsOpen => _popup.IsOpen;

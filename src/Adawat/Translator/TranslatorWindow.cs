@@ -51,6 +51,7 @@ public sealed class TranslatorWindow : FluentWindow
     private readonly DockPanel _footer;
     private readonly StackPanel _dictionaryPanel = new();
     private readonly StackPanel _resultCard;
+    private readonly Border _resultFrame;
     private readonly StackPanel _secondCard;
     private readonly Border _pinButton;
     private readonly DispatcherTimer _typingTimer;
@@ -100,11 +101,12 @@ public sealed class TranslatorWindow : FluentWindow
         MaxHeight = 760;
         FontFamily = new FontFamily(Ui.FontFamilyName);
         ApplyTheme();
-        SetResourceReference(BackgroundProperty, "Adawat.Surface");
+        SetResourceReference(BackgroundProperty, "Adawat.Wash");
 
         // ---- Header: from / swap / to on the left, window buttons on the right -----------
-        var swap = PopupUi.IconButton(SymbolRegular.ArrowSwap20, "Swap languages", Swap, 15);
-        swap.Margin = new Thickness(2, 0, 2, 0);
+        var swap = PopupUi.IconButton(SymbolRegular.ArrowSwap20, "Swap languages", Swap, 15, brush: "AccentText");
+        swap.Margin = new Thickness(4, 0, 4, 0);
+        _targetPicker.Strong = true;
         _pinButton = PopupUi.IconButton(SymbolRegular.Pin20, "Keep open", TogglePin);
         var languages = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         languages.Children.Add(_sourcePicker);
@@ -158,7 +160,7 @@ public sealed class TranslatorWindow : FluentWindow
             _typingTimer.Start();
         };
 
-        _detected = PopupUi.Text("", 12, "Muted");
+        _detected = PopupUi.Text("", 12, "AccentText");
         _detected.VerticalAlignment = VerticalAlignment.Center;
         _detected.TextWrapping = TextWrapping.NoWrap;
         _detected.TextTrimming = TextTrimming.CharacterEllipsis;
@@ -188,7 +190,7 @@ public sealed class TranslatorWindow : FluentWindow
         _progressBar.RenderTransform = new TranslateTransform();
         _progressBar.Visibility = Visibility.Collapsed;
         var line = new Border { Height = 1, VerticalAlignment = VerticalAlignment.Center };
-        line.SetResourceReference(Border.BackgroundProperty, "Adawat.Divider");
+        line.SetResourceReference(Border.BackgroundProperty, "Adawat.AccentSoft");
         _divider = new Grid { Height = 2, Margin = new Thickness(18, 0, 18, 0), ClipToBounds = true };
         _divider.Children.Add(line);
         _divider.Children.Add(_progressBar);
@@ -201,6 +203,9 @@ public sealed class TranslatorWindow : FluentWindow
         _resultCard = new StackPanel();
         _resultCard.Children.Add(_resultBox);
         _resultCard.Children.Add(_translit);
+        // A slim accent bar on the side the translation starts from.
+        _resultFrame = new Border { BorderThickness = new Thickness(3, 0, 0, 0), Padding = new Thickness(12, 2, 0, 2), Child = _resultCard };
+        _resultFrame.SetResourceReference(Border.BorderBrushProperty, "Adawat.Accent");
 
         _secondLabel = PopupUi.Text("", 11, "Muted", FontWeights.SemiBold);
         _secondLabel.Margin = new Thickness(0, 14, 0, 3);
@@ -213,11 +218,11 @@ public sealed class TranslatorWindow : FluentWindow
         _dictionaryPanel.Margin = new Thickness(0, 12, 0, 0);
 
         var resultTools = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(-8, 6, 0, 0) };
-        resultTools.Children.Add(PopupUi.IconButton(SymbolRegular.Speaker220, "Listen", () => Speak(_resultBox.Text, _last?.TargetLanguage ?? _targetPicker.Code)));
-        resultTools.Children.Add(PopupUi.IconButton(SymbolRegular.Copy20, "Copy translation", () => Copy(_resultBox.Text)));
+        resultTools.Children.Add(PopupUi.IconButton(SymbolRegular.Speaker220, "Listen", () => Speak(_resultBox.Text, _last?.TargetLanguage ?? _targetPicker.Code), brush: "AccentText"));
+        resultTools.Children.Add(PopupUi.IconButton(SymbolRegular.Copy20, "Copy translation", () => Copy(_resultBox.Text), brush: "AccentText"));
 
         _resultSection = new StackPanel { Margin = new Thickness(18, 14, 18, 0), Visibility = Visibility.Collapsed };
-        _resultSection.Children.Add(_resultCard);
+        _resultSection.Children.Add(_resultFrame);
         _resultSection.Children.Add(_secondCard);
         _resultSection.Children.Add(_dictionaryPanel);
         _resultSection.Children.Add(resultTools);
@@ -307,7 +312,7 @@ public sealed class TranslatorWindow : FluentWindow
     private void ApplyBorderColor()
     {
         if (_hwnd == IntPtr.Zero) return;
-        var c = ThemeHelper.PaletteColor("Border");
+        var c = ThemeHelper.PaletteColor("AccentLine");
         int colorRef = c.R | (c.G << 8) | (c.B << 16);
         Native.DwmSetWindowAttribute(_hwnd, Native.DWMWA_BORDER_COLOR, ref colorRef, sizeof(int));
     }
@@ -376,6 +381,7 @@ public sealed class TranslatorWindow : FluentWindow
         ShowFor(entry.Source, PopupMode.Manual, WindowInfo.CursorPosition(), translateNow: false);
         _resultBox.Text = entry.Translation;
         _resultBox.FlowDirection = Languages.IsRightToLeft(entry.TargetLanguage) ? FlowDirection.RightToLeft : FlowDirection.LeftToRight;
+        _resultFrame.FlowDirection = _resultBox.FlowDirection;
         _detected.Text = $"{Languages.NameOf(entry.SourceLanguage)} → {Languages.NameOf(entry.TargetLanguage)}";
         _translatedText = _sourceBox.Text.Trim();
         _resultSection.Visibility = Visibility.Visible;
@@ -552,6 +558,7 @@ public sealed class TranslatorWindow : FluentWindow
         _resultSection.Visibility = Visibility.Visible;
         _resultBox.Text = result.Translation;
         _resultBox.FlowDirection = Languages.IsRightToLeft(result.TargetLanguage) ? FlowDirection.RightToLeft : FlowDirection.LeftToRight;
+        _resultFrame.FlowDirection = _resultBox.FlowDirection;
 
         if (usedFallback)
             _detected.Text = $"Already {Languages.NameOf(requestedTarget)}: showing {Languages.NameOf(result.TargetLanguage)}";

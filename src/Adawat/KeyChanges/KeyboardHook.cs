@@ -131,7 +131,7 @@ public sealed class KeyboardHook : IDisposable
                 var decision = Remapper.Process(vk, (int)data.scanCode, up, ours);
                 if (decision.Swallow)
                 {
-                    if (decision.SendKey != 0) InputSender.SendKey((ushort)decision.SendKey, up);
+                    if (decision.Send.Count > 0) InputSender.SendKeys(decision.Send);
                     return new IntPtr(1);
                 }
             }

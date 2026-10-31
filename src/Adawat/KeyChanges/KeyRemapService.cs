@@ -30,7 +30,9 @@ public sealed class KeyRemapService : IDisposable
     public void Apply()
     {
         _hook.ReleaseHeldKeys();
-        var rules = S.Enabled ? S.Remaps.Where(r => r.Enabled).Select(r => (r.From, r.To)) : Enumerable.Empty<(int, int)>();
+        var rules = S.Enabled
+            ? S.Remaps.Where(r => r.Enabled).Select(r => new KeyRule(r.From, r.To, r.Keep.ToHashSet()))
+            : Enumerable.Empty<KeyRule>();
         _hook.Remapper.SetRules(rules);
         UpdateHook();
         if (_hook.Remapper.Count > 0 && S.DisabledApps.Count > 0) _foregroundWatch.Start();

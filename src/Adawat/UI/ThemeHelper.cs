@@ -187,6 +187,20 @@ public static class ThemeHelper
         }
         Set("Accent", accent);
         Set("AccentSoft", Color.FromArgb(dark ? (byte)0x2E : (byte)0x16, accent.R, accent.G, accent.B));
+        // Accent for text and icons: a little deeper on light backgrounds so it reads well.
+        Set("AccentText", dark ? Lighten(accent, 0.15) : Blend(accent, Colors.Black, 0.18));
+        // A clear but gentle accent fill, for the language chips.
+        Set("AccentChip", dark ? Blend(Color.FromRgb(0x1E, 0x1F, 0x22), accent, 0.22) : Blend(Colors.White, accent, 0.12));
+        Set("AccentChipHover", dark ? Blend(Color.FromRgb(0x1E, 0x1F, 0x22), accent, 0.32) : Blend(Colors.White, accent, 0.2));
+        Set("AccentLine", dark ? Blend(Color.FromRgb(0x1E, 0x1F, 0x22), accent, 0.35) : Blend(Colors.White, accent, 0.28));
+
+        // The translator's background: one surface with a soft wash of the accent from the top,
+        // so it has color without being split into two different halves.
+        var top = dark ? Blend(Color.FromRgb(0x1E, 0x1F, 0x22), accent, 0.13) : Blend(Colors.White, accent, 0.085);
+        var bottom = dark ? Blend(Color.FromRgb(0x1E, 0x1F, 0x22), accent, 0.03) : Blend(Colors.White, accent, 0.015);
+        var wash = new LinearGradientBrush(top, bottom, 90);
+        wash.Freeze();
+        resources["Adawat.Wash"] = wash;
     }
 
     /// <summary>The palette color for a key (see <see cref="ApplyPalette"/>), for code that needs a raw color.</summary>

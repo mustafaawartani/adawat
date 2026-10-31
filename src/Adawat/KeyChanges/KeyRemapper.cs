@@ -1,20 +1,31 @@
+using System;
 using System.Collections.Generic;
 
 namespace Adawat.KeyChanges;
 
-/// <summary>What to do with one key press or release.</summary>
-/// <param name="Swallow">Keep the original key from reaching apps.</param>
-/// <param name="SendKey">The key to send instead (0 = nothing).</param>
-public readonly record struct KeyDecision(bool Swallow, int SendKey)
+/// <summary>One key press or release to send.</summary>
+public readonly record struct KeyEvent(int Key, bool Up);
+
+/// <summary>What to do with one key press or release: let it through, or swallow it and send these keys instead.</summary>
+public sealed record KeyDecision(bool Swallow, IReadOnlyList<KeyEvent> Send)
 {
-    public static readonly KeyDecision Pass = new(false, 0);
-    public static readonly KeyDecision Block = new(true, 0);
+    public static readonly KeyDecision Pass = new(false, Array.Empty<KeyEvent>());
+    public static readonly KeyDecision Block = new(true, Array.Empty<KeyEvent>());
+
+    public static KeyDecision Replace(int key, bool up) => key == 0 ? Block : new(true, new[] { new KeyEvent(key, up) });
 }
+
+/// <summary>
+/// "<see cref="From"/> works as <see cref="To"/>" (0 = the key does nothing). While From is held,
+/// pressing one of the <see cref="Keep"/> keys makes it its old self again until it is released, so
+/// with Left Alt working as Left Ctrl, Alt + Tab can still switch windows.
+/// </summary>
+public readonly record struct KeyRule(int From, int To, ISet<int>? Keep = null);
 
 /// <summary>
 /// The rules behind "make one key act as another", kept free of Windows calls so they can be tested.
 /// Keys are Windows virtual-key codes with sides (left Ctrl is 0xA2, right Ctrl 0xA3…), as the
-/// keyboard hook reports them. A target of 0 turns the key off.
+/// keyboard hook reports them.
 /// </summary>
 public sealed class KeyRemapper
 {
@@ -23,8 +34,8 @@ public sealed class KeyRemapper
     private const int AltGrFakeCtrlScanCode = 0x21D;
 
     private readonly object _gate = new();
-    private Dictionary<int, int> _map = new();
-    // Keys held down right now and what they were turned into, so the release always matches the
+    private Dictionary<int, KeyRule> _rules = new();
+    // Keys held down right now and what is being sent for them, so the release always matches the
     // press even if the rules or the app in front changed in between.
     private readonly Dictionary<int, int> _held = new();
 
@@ -33,18 +44,25 @@ public sealed class KeyRemapper
 
     public int Count
     {
-        get { lock (_gate) return _map.Count; }
+        get { lock (_gate) return _rules.Count; }
     }
 
     public void SetRules(IEnumerable<(int From, int To)> rules)
     {
-        var map = new Dictionary<int, int>();
-        foreach (var (from, to) in rules)
+        var list = new List<KeyRule>();
+        foreach (var (from, to) in rules) list.Add(new KeyRule(from, to));
+        SetRules(list);
+    }
+
+    public void SetRules(IEnumerable<KeyRule> rules)
+    {
+        var map = new Dictionary<int, KeyRule>();
+        foreach (var rule in rules)
         {
-            if (from <= 0 || from > 0xFE || to < 0 || to > 0xFE || from == to) continue;
-            map[from] = to;
+            if (rule.From <= 0 || rule.From > 0xFE || rule.To < 0 || rule.To > 0xFE || rule.From == rule.To) continue;
+            map[rule.From] = rule;
         }
-        lock (_gate) _map = map;
+        lock (_gate) _rules = map;
     }
 
     public KeyDecision Process(int vk, int scanCode, bool up, bool sentByAdawat)
@@ -55,14 +73,37 @@ public sealed class KeyRemapper
         {
             if (up)
             {
-                if (!_held.Remove(vk, out var target)) return KeyDecision.Pass;
-                return new KeyDecision(true, target);
+                return _held.Remove(vk, out var sent) ? KeyDecision.Replace(sent, up: true) : KeyDecision.Pass;
             }
-            if (_held.TryGetValue(vk, out var repeating)) return new KeyDecision(true, repeating); // key repeat
-            if (Paused || !_map.TryGetValue(vk, out var to)) return KeyDecision.Pass;
-            _held[vk] = to;
-            return new KeyDecision(true, to);
+            if (_held.TryGetValue(vk, out var repeating)) return KeyDecision.Replace(repeating, up: false); // key repeat
+
+            var keep = KeepSwitch(vk);
+            if (keep != null) return keep;
+
+            if (Paused || !_rules.TryGetValue(vk, out var rule)) return KeyDecision.Pass;
+            _held[vk] = rule.To;
+            return KeyDecision.Replace(rule.To, up: false);
         }
+    }
+
+    /// <summary>
+    /// A "keep" key pressed while a changed key is held: let go of the new key, press the old one,
+    /// then this key, all in that order (sent together, so the app sees Alt before Tab).
+    /// </summary>
+    private KeyDecision? KeepSwitch(int vk)
+    {
+        List<KeyEvent>? events = null;
+        foreach (var (source, sent) in new List<KeyValuePair<int, int>>(_held))
+        {
+            if (!_rules.TryGetValue(source, out var rule) || sent != rule.To || rule.Keep == null || !rule.Keep.Contains(vk)) continue;
+            events ??= new List<KeyEvent>();
+            if (rule.To != 0) events.Add(new KeyEvent(rule.To, Up: true));
+            events.Add(new KeyEvent(source, Up: false));
+            _held[source] = source;
+        }
+        if (events == null) return null;
+        events.Add(new KeyEvent(vk, Up: false));
+        return new KeyDecision(true, events);
     }
 
     /// <summary>Forgets the held keys and returns the keys Adawat pressed for them, so they can be released.</summary>
@@ -71,9 +112,9 @@ public sealed class KeyRemapper
         lock (_gate)
         {
             var keys = new List<int>();
-            foreach (var target in _held.Values)
+            foreach (var sent in _held.Values)
             {
-                if (target != 0 && !keys.Contains(target)) keys.Add(target);
+                if (sent != 0 && !keys.Contains(sent)) keys.Add(sent);
             }
             _held.Clear();
             return keys;

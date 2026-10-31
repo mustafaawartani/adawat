@@ -31,9 +31,9 @@ public static class PopupUi
     }
 
     /// <summary>A small round-cornered icon button that only shows a background on hover.</summary>
-    public static Border IconButton(SymbolRegular symbol, string tooltip, Action onClick, double size = 16)
+    public static Border IconButton(SymbolRegular symbol, string tooltip, Action onClick, double size = 16, string brush = "Muted")
     {
-        var icon = Icon(symbol, size, "Muted");
+        var icon = Icon(symbol, size, brush);
         var button = new Border
         {
             Width = 30,
@@ -48,7 +48,7 @@ public static class PopupUi
         icon.VerticalAlignment = VerticalAlignment.Center;
         MakeClickable(button, onClick, hoverBrush: "Hover");
         button.MouseEnter += (_, _) => icon.SetResourceReference(Control.ForegroundProperty, IsActive(button) ? "Adawat.Accent" : "Adawat.Text");
-        button.MouseLeave += (_, _) => icon.SetResourceReference(Control.ForegroundProperty, IsActive(button) ? "Adawat.Accent" : "Adawat.Muted");
+        button.MouseLeave += (_, _) => icon.SetResourceReference(Control.ForegroundProperty, IsActive(button) ? "Adawat.Accent" : "Adawat." + brush);
         return button;
     }
 

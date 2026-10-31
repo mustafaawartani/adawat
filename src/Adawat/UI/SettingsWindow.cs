@@ -519,6 +519,7 @@ public sealed class SettingsWindow : FluentWindow
                 row.Children.Add(remove);
                 string title = remap.From == 0 ? "New key change" : $"{KeyChanges.KeyNames.Name(remap.From)} works as {KeyChanges.KeyNames.Name(remap.To)}";
                 list.Children.Add(Ui.Card(SymbolRegular.ArrowSwap24, title, null, row));
+                if (remap.From is 0xA4 or 0xA5 && remap.To != 0xA4 && remap.To != 0xA5) list.Children.Add(KeepAltCard(remap));
             }
         }
         Fill();
@@ -533,7 +534,7 @@ public sealed class SettingsWindow : FluentWindow
         var swap = Ui.Button("Swap Ctrl and Alt", () =>
         {
             k.Remaps.RemoveAll(r => r.From is 0xA2 or 0xA4);
-            k.Remaps.Add(new KeyRemap { From = 0xA4, To = 0xA2 }); // Left Alt  -> Left Ctrl
+            k.Remaps.Add(new KeyRemap { From = 0xA4, To = 0xA2, Keep = KeyRemap.DefaultAltKeep() }); // Left Alt  -> Left Ctrl
             k.Remaps.Add(new KeyRemap { From = 0xA2, To = 0xA4 }); // Left Ctrl -> Left Alt
             k.Enabled = true;
             Save();
@@ -554,6 +555,61 @@ public sealed class SettingsWindow : FluentWindow
         p.Children.Add(AppListCard("Apps where keys are not changed", "Games or remote desktop, for example. One program per line, e.g. mstsc.exe",
             k.DisabledApps, v => { k.DisabledApps = v; Changed(); }));
         return p;
+    }
+
+    /// <summary>The Alt shortcuts that can keep working as Alt shortcuts while Alt works as another key.</summary>
+    private static readonly (string Label, string Hint, int[] Keys)[] AltShortcuts =
+    {
+        ("Alt + Tab", "switch windows", new[] { 0x09 }),
+        ("Alt + F4", "close the window", new[] { 0x73 }),
+        ("Alt + Esc", "next window", new[] { 0x1B }),
+        ("Alt + Space", "window menu", new[] { 0x20 }),
+        ("Alt + Shift", "switch keyboard language (Ctrl + Shift shortcuts then need the other Ctrl)", new[] { 0xA0, 0xA1 }),
+        ("Alt + ← / →", "back and forward", new[] { 0x25, 0x27 }),
+        ("Alt + Enter", "properties, full screen", new[] { 0x0D }),
+        ("Alt + 0…9", "number shortcuts, such as Adawat's Alt + 1", new[] { 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39 }),
+        ("Alt + letters", "menus and app shortcuts (then Alt + C no longer copies)", Enumerable.Range(0x41, 26).ToArray()),
+    };
+
+    /// <summary>Checkboxes for the Alt shortcuts that stay Alt shortcuts (Alt + Tab…) under a rule that changes Alt.</summary>
+    private CardControl KeepAltCard(KeyRemap remap)
+    {
+        var boxes = new WrapPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 0) };
+        foreach (var (label, hint, keys) in AltShortcuts)
+        {
+            var box = new CheckBox
+            {
+                Content = label,
+                ToolTip = hint,
+                IsChecked = keys.All(remap.Keep.Contains),
+                Margin = new Thickness(0, 0, 18, 6),
+                MinWidth = 120,
+            };
+            box.Checked += (_, _) =>
+            {
+                foreach (var key in keys) if (!remap.Keep.Contains(key)) remap.Keep.Add(key);
+                Changed();
+            };
+            box.Unchecked += (_, _) =>
+            {
+                remap.Keep.RemoveAll(keys.Contains);
+                Changed();
+            };
+            boxes.Children.Add(box);
+        }
+        var header = new StackPanel();
+        header.Children.Add(Ui.Text("Keep these as Alt shortcuts", 14));
+        var description = Ui.Text($"While you hold {KeyChanges.KeyNames.Name(remap.From)}, pressing one of these keys makes it a real Alt again until you let go. " +
+                                  "Everything else keeps working as " + KeyChanges.KeyNames.Name(remap.To) + ".", 12, secondary: true);
+        description.Margin = new Thickness(0, 2, 0, 0);
+        header.Children.Add(description);
+        header.Children.Add(boxes);
+        return new CardControl
+        {
+            Icon = Ui.Icon(SymbolRegular.KeyboardShift24, 20),
+            Header = header,
+            Margin = new Thickness(28, -2, 0, 8),
+        };
     }
 
     /// <summary>A box showing a key; click it, then press a key on the keyboard to choose another.</summary>

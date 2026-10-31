@@ -179,6 +179,14 @@ public sealed class KeyRemap
     public int From { get; set; }
     public int To { get; set; }
     public bool Enabled { get; set; } = true;
+    /// <summary>
+    /// Keys that, pressed while <see cref="From"/> is held, make it its old self again (e.g. Tab, so that
+    /// with Left Alt working as Left Ctrl, Alt + Tab still switches windows).
+    /// </summary>
+    public List<int> Keep { get; set; } = new();
+
+    /// <summary>The Alt shortcuts kept by default when Alt is made to work as Ctrl: Tab, F4, Esc, Space.</summary>
+    public static List<int> DefaultAltKeep() => new() { 0x09, 0x73, 0x1B, 0x20 };
 }
 
 /// <summary>Loads and saves <see cref="AppSettings"/> as JSON in %AppData%\Adawat.</summary>
@@ -191,7 +199,7 @@ public static class SettingsStore
         Converters = { new JsonStringEnumConverter() },
     };
 
-    public const int CurrentVersion = 5;
+    public const int CurrentVersion = 6;
 
     public static string FilePath => Path.Combine(AppPaths.DataFolder, "settings.json");
 
@@ -226,6 +234,14 @@ public static class SettingsStore
             if (g.PinchSensitivity <= 5) g.ScreenZoomSpeed = Math.Min(g.ScreenZoomSpeed, 30);
             // Small pictures such as profile pictures next to videos and comments now open too.
             if (settings.ImageZoom.MinSize == 48) settings.ImageZoom.MinSize = 32;
+        }
+        if (settings.SettingsVersion < 6)
+        {
+            // New: Alt + Tab, Alt + F4… can stay Alt shortcuts when Alt is made to work as Ctrl.
+            foreach (var rule in settings.KeyChanges.Remaps)
+            {
+                if (rule.From is 0xA4 or 0xA5 && rule.To is 0xA2 or 0xA3 && rule.Keep.Count == 0) rule.Keep = KeyRemap.DefaultAltKeep();
+            }
         }
         settings.SettingsVersion = CurrentVersion;
         return settings;

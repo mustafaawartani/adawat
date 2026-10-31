@@ -190,7 +190,7 @@ public sealed class TranslatorWindow : FluentWindow
         _progressBar.RenderTransform = new TranslateTransform();
         _progressBar.Visibility = Visibility.Collapsed;
         var line = new Border { Height = 1, VerticalAlignment = VerticalAlignment.Center };
-        line.SetResourceReference(Border.BackgroundProperty, "Adawat.AccentSoft");
+        line.SetResourceReference(Border.BackgroundProperty, "Adawat.AccentLine");
         _divider = new Grid { Height = 2, Margin = new Thickness(18, 0, 18, 0), ClipToBounds = true };
         _divider.Children.Add(line);
         _divider.Children.Add(_progressBar);

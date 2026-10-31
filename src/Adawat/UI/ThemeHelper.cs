@@ -161,8 +161,9 @@ public static class ThemeHelper
         {
             Set("Surface", Color.FromRgb(0x1E, 0x1F, 0x22));
             Set("Subtle", Color.FromRgb(0x27, 0x28, 0x2C));
-            Set("Hover", Color.FromRgb(0x2E, 0x30, 0x34));
-            Set("Pressed", Color.FromRgb(0x36, 0x38, 0x3D));
+            // See-through, so hover looks right on plain and on tinted backgrounds alike.
+            Set("Hover", Color.FromArgb(0x1F, 0xFF, 0xFF, 0xFF));
+            Set("Pressed", Color.FromArgb(0x2E, 0xFF, 0xFF, 0xFF));
             Set("Border", Color.FromRgb(0x3A, 0x3C, 0x41));
             Set("Divider", Color.FromRgb(0x2F, 0x31, 0x35));
             Set("Text", Color.FromRgb(0xEC, 0xED, 0xEF));
@@ -175,8 +176,8 @@ public static class ThemeHelper
         {
             Set("Surface", Colors.White);
             Set("Subtle", Color.FromRgb(0xF5, 0xF6, 0xF8));
-            Set("Hover", Color.FromRgb(0xF0, 0xF1, 0xF4));
-            Set("Pressed", Color.FromRgb(0xE6, 0xE8, 0xEC));
+            Set("Hover", Color.FromArgb(0xB3, 0xFF, 0xFF, 0xFF));
+            Set("Pressed", Color.FromArgb(0xFF, 0xFF, 0xFF, 0xFF));
             Set("Border", Color.FromRgb(0xE3, 0xE5, 0xE9));
             Set("Divider", Color.FromRgb(0xEE, 0xEF, 0xF2));
             Set("Text", Color.FromRgb(0x17, 0x19, 0x1D));
@@ -189,15 +190,15 @@ public static class ThemeHelper
         Set("AccentSoft", Color.FromArgb(dark ? (byte)0x2E : (byte)0x16, accent.R, accent.G, accent.B));
         // Accent for text and icons: a little deeper on light backgrounds so it reads well.
         Set("AccentText", dark ? Lighten(accent, 0.15) : Blend(accent, Colors.Black, 0.18));
-        // A clear but gentle accent fill, for the language chips.
-        Set("AccentChip", dark ? Blend(Color.FromRgb(0x1E, 0x1F, 0x22), accent, 0.22) : Blend(Colors.White, accent, 0.12));
-        Set("AccentChipHover", dark ? Blend(Color.FromRgb(0x1E, 0x1F, 0x22), accent, 0.32) : Blend(Colors.White, accent, 0.2));
-        Set("AccentLine", dark ? Blend(Color.FromRgb(0x1E, 0x1F, 0x22), accent, 0.35) : Blend(Colors.White, accent, 0.28));
+        // The language chips: soft white (light) or a lighter layer (dark) over the colored window.
+        Set("AccentChip", dark ? Color.FromArgb(0x24, 0xFF, 0xFF, 0xFF) : Color.FromArgb(0xC8, 0xFF, 0xFF, 0xFF));
+        Set("AccentChipHover", dark ? Color.FromArgb(0x38, 0xFF, 0xFF, 0xFF) : Colors.White);
+        Set("AccentLine", dark ? Blend(Color.FromRgb(0x1E, 0x1F, 0x22), accent, 0.45) : Blend(Colors.White, accent, 0.34));
 
-        // The translator's background: one surface with a soft wash of the accent from the top,
-        // so it has color without being split into two different halves.
-        var top = dark ? Blend(Color.FromRgb(0x1E, 0x1F, 0x22), accent, 0.13) : Blend(Colors.White, accent, 0.085);
-        var bottom = dark ? Blend(Color.FromRgb(0x1E, 0x1F, 0x22), accent, 0.03) : Blend(Colors.White, accent, 0.015);
+        // The translator's background: the whole window in the accent color, light enough to read
+        // on, a touch deeper at the top. One color, not split into two different halves.
+        var top = dark ? Blend(Color.FromRgb(0x1E, 0x1F, 0x22), accent, 0.26) : Blend(Colors.White, accent, 0.2);
+        var bottom = dark ? Blend(Color.FromRgb(0x1E, 0x1F, 0x22), accent, 0.17) : Blend(Colors.White, accent, 0.13);
         var wash = new LinearGradientBrush(top, bottom, 90);
         wash.Freeze();
         resources["Adawat.Wash"] = wash;

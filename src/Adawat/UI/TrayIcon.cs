@@ -2,6 +2,7 @@ using System;
 using System.Drawing;
 using System.Windows.Forms;
 using Adawat.Core;
+using Adawat.KeepAwake;
 
 namespace Adawat.UI;
 
@@ -17,13 +18,28 @@ public sealed class TrayIcon : IDisposable
     private readonly ToolStripMenuItem _translateItem;
     private readonly ToolStripMenuItem _boxItem;
     private readonly ToolStripMenuItem _ocrItem;
+    private readonly ToolStripMenuItem _awakeItem;
+    private readonly ToolStripMenuItem _awakeOff;
+    private readonly KeepAwakeService _keepAwake;
 
     public TrayIcon(AppSettings settings, Action openBox, Action translateSelection, Action captureScreen,
-        Action openSettings, Action<string> openSettingsPage, Action settingsChanged, Action exit)
+        Action openSettings, Action<string> openSettingsPage, Action settingsChanged, Action exit, KeepAwakeService keepAwake)
     {
         _settings = settings;
+        _keepAwake = keepAwake;
+        _awakeItem = new ToolStripMenuItem("Stay awake");
+        foreach (int minutes in new[] { 30, 60, 120, 240, 0 })
+        {
+            int length = minutes;
+            _awakeItem.DropDownItems.Add(new ToolStripMenuItem(KeepAwakeService.LengthName(length), null, (_, _) => _keepAwake.Start(length)));
+        }
+        _awakeItem.DropDownItems.Add(new ToolStripMenuItem("Other length or time…", null, (_, _) => openSettingsPage("Stay awake")));
+        _awakeItem.DropDownItems.Add(new ToolStripSeparator());
+        _awakeOff = new ToolStripMenuItem("Turn off", null, (_, _) => _keepAwake.Stop());
+        _awakeItem.DropDownItems.Add(_awakeOff);
+        _keepAwake.Changed += UpdateTooltip;
         _translateItem = new ToolStripMenuItem("Translate selected text", null, (_, _) => translateSelection());
-        _boxItem = new ToolStripMenuItem("Open translator", null, (_, _) => openBox()) { Font = new Font(SystemFonts.MenuFont ?? SystemFonts.DefaultFont, FontStyle.Bold) };
+        _boxItem = new ToolStripMenuItem("Open translator", null, (_, _) => openBox());
         _ocrItem = new ToolStripMenuItem("Text from screen", null, (_, _) => captureScreen());
         _translatorItem = new ToolStripMenuItem("Translator on", null, (_, _) =>
         {
@@ -56,8 +72,11 @@ public sealed class TrayIcon : IDisposable
         menu.Items.Add(_keysItem);
         menu.Items.Add(_imageZoomItem);
         menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(_awakeItem);
+        menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(new ToolStripMenuItem("History", null, (_, _) => openSettingsPage("History")));
-        menu.Items.Add(new ToolStripMenuItem("Settings", null, (_, _) => openSettings()));
+        // Bold: what a click on the icon does.
+        menu.Items.Add(new ToolStripMenuItem("Settings", null, (_, _) => openSettings()) { Font = new Font(SystemFonts.MenuFont ?? SystemFonts.DefaultFont, FontStyle.Bold) });
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(new ToolStripMenuItem("Exit Adawat", null, (_, _) => exit()));
         foreach (ToolStripItem item in menu.Items) item.Padding = new Padding(4, 3, 8, 3);
@@ -70,10 +89,20 @@ public sealed class TrayIcon : IDisposable
             ContextMenuStrip = menu,
             Visible = true,
         };
+        // A click on the icon opens the settings; the translator has its shortcut and the menu.
         _icon.MouseClick += (_, e) =>
         {
-            if (e.Button == MouseButtons.Left) openBox();
+            if (e.Button == MouseButtons.Left) openSettings();
         };
+        UpdateTooltip();
+    }
+
+    private void UpdateTooltip()
+    {
+        var text = "Adawat";
+        if (_keepAwake.IsOn)
+            text += _keepAwake.EndsAt is { } end ? $" · staying awake until {end:t}" : " · staying awake";
+        _icon.Text = text.Length > 63 ? text[..63] : text; // Windows' limit for the tooltip
     }
 
     private void Refresh(ContextMenuStrip menu)
@@ -86,6 +115,12 @@ public sealed class TrayIcon : IDisposable
         _translateItem.ShortcutKeyDisplayString = _settings.Translator.TranslateHotkey;
         _boxItem.ShortcutKeyDisplayString = _settings.Translator.OpenBoxHotkey;
         _ocrItem.ShortcutKeyDisplayString = _settings.Ocr.Hotkey;
+        _awakeItem.Checked = _keepAwake.IsOn;
+        _awakeItem.Text = _keepAwake.IsOn
+            ? (_keepAwake.EndsAt is { } end ? $"Stay awake · {KeepAwakeService.Remaining(end - DateTime.Now)} left" : "Stay awake · on")
+            : "Stay awake";
+        _awakeOff.Visible = _keepAwake.IsOn;
+        _awakeOff.Enabled = _keepAwake.IsOn;
 
         bool dark = ThemeHelper.IsDark;
         var a = ThemeHelper.AccentColor;
@@ -94,6 +129,13 @@ public sealed class TrayIcon : IDisposable
         menu.BackColor = colors.Back;
         menu.ForeColor = dark ? Color.White : Color.FromArgb(0x1A, 0x1A, 0x1A);
         foreach (ToolStripItem item in menu.Items) item.ForeColor = menu.ForeColor;
+        _awakeItem.DropDown.Renderer = menu.Renderer;
+        _awakeItem.DropDown.BackColor = colors.Back;
+        foreach (ToolStripItem item in _awakeItem.DropDownItems)
+        {
+            item.ForeColor = menu.ForeColor;
+            item.Padding = new Padding(4, 3, 8, 3);
+        }
     }
 
     public void ShowBalloon(string title, string text)

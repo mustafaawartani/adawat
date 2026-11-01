@@ -11,7 +11,8 @@ namespace Adawat.Gestures;
 /// <summary>
 /// Chrome-style visual zoom for the whole screen, using the Windows magnification API
 /// (the same one the Windows Magnifier uses). Nothing inside apps changes size: the picture
-/// on screen is magnified around the pointer, and moving the pointer pans the view.
+/// on screen is magnified around the pointer. Two fingers move the view; the mouse pointer stays
+/// inside the zoomed view (or, if chosen, pushes the view along at its edges).
 /// Clicks keep landing where the magnified pointer shows.
 ///
 /// The zoom is drawn by its own thread in step with the screen refresh (see <see cref="ZoomView"/>
@@ -39,6 +40,18 @@ public sealed class ScreenMagnifier : IDisposable
 
     [DllImport("user32.dll")]
     private static extern bool SetCursorPos(int x, int y);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT
+    {
+        public int Left, Top, Right, Bottom;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool ClipCursor(ref RECT rect);
+
+    [DllImport("user32.dll", EntryPoint = "ClipCursor")]
+    private static extern bool UnclipCursor(IntPtr none);
 
     /// <summary>Not in the documentation, but exported since Windows 10: smooth (true) or sharp pixels (false).</summary>
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
@@ -79,6 +92,12 @@ public sealed class ScreenMagnifier : IDisposable
 
     /// <summary>False: the content follows the fingers (like Chrome). True: the view follows the fingers.</summary>
     public bool InvertPan { get; set; }
+
+    /// <summary>
+    /// True: pushing the pointer against the edge of the zoomed view moves the view along.
+    /// False: the pointer stops at the edge of what is shown, and only two fingers move the view.
+    /// </summary>
+    public bool PointerMovesView { get; set; }
 
     /// <summary>Round the zoom to 2x, 3x… when the fingers lift close to one, for the sharpest picture.</summary>
     public bool SnapToWholeLevels { get; set; }
@@ -285,6 +304,7 @@ public sealed class ScreenMagnifier : IDisposable
             lock (_gate) active = _view.IsZoomed || !_view.IsSettled || _smoothingApplied != _smoothingWanted;
             if (!active)
             {
+                ReleasePointer();
                 _wake.WaitOne();
                 last = clock.Elapsed.TotalSeconds;
                 continue;
@@ -299,11 +319,14 @@ public sealed class ScreenMagnifier : IDisposable
             int x, y;
             bool zoomed;
             bool smooth;
+            bool confine = false;
             lock (_gate)
             {
                 smooth = _smoothingWanted;
+                bool resting = !_gliding && !_panning && !_view.Pinching && _view.IsZoomed && Math.Abs(_view.Level - _view.TargetLevel) < 0.0005;
                 if (_gliding) Glide(dt);
-                else if (!_panning && !_view.Pinching && _view.IsZoomed && Math.Abs(_view.Level - _view.TargetLevel) < 0.0005) FollowPointer();
+                else if (resting && PointerMovesView) FollowPointer();
+                confine = resting && !PointerMovesView && _view.IsSettled;
                 _view.Step(dt);
                 level = (float)_view.Level;
                 bool settled = _view.IsSettled;
@@ -321,6 +344,8 @@ public sealed class ScreenMagnifier : IDisposable
             }
 
             FlushScroll();
+            if (confine) ConfinePointer(x, y, level);
+            else ReleasePointer();
             if (setSmoothing != null && _smoothingApplied != smooth)
             {
                 try { setSmoothing(smooth); } catch { }
@@ -340,6 +365,7 @@ public sealed class ScreenMagnifier : IDisposable
             }
         }
 
+        ReleasePointer();
         try
         {
             MagSetFullscreenTransform(1, 0, 0);
@@ -397,6 +423,35 @@ public sealed class ScreenMagnifier : IDisposable
         double dx = _glideVx * dt, dy = _glideVy * dt;
         var (overX, overY) = _view.PanBy(dx, dy);
         AddScroll(dx, dy, overX, overY);
+    }
+
+    private bool _clipped;
+
+    /// <summary>
+    /// Keeps the mouse pointer inside the part of the screen that is shown, like a wall at the edge of
+    /// the zoomed view: the pointer cannot get lost outside it, and the view stays where the fingers
+    /// put it. Applied again every frame, because Windows drops the limit when windows change.
+    /// The pointer stays free on other screens (the zoom is on the main screen only).
+    /// </summary>
+    private void ConfinePointer(int x, int y, float level)
+    {
+        var p = WindowInfo.CursorPosition();
+        if (!_clipped && (p.X < 0 || p.Y < 0 || p.X >= _view.ScreenWidth || p.Y >= _view.ScreenHeight)) return;
+        var rect = new RECT
+        {
+            Left = x,
+            Top = y,
+            Right = x + Math.Max(1, (int)Math.Floor(_view.ScreenWidth / level)),
+            Bottom = y + Math.Max(1, (int)Math.Floor(_view.ScreenHeight / level)),
+        };
+        _clipped = ClipCursor(ref rect);
+    }
+
+    private void ReleasePointer()
+    {
+        if (!_clipped) return;
+        _clipped = false;
+        UnclipCursor(IntPtr.Zero);
     }
 
     /// <summary>While zoomed, glide the view along so the pointer never leaves the visible area.</summary>

@@ -43,6 +43,9 @@ public sealed class ImageFinder : IDisposable
         _thread.Start();
     }
 
+    /// <summary>True while an app is still being asked about the last point.</summary>
+    public bool IsBusy => Volatile.Read(ref _busy) == 1;
+
     /// <summary>The picture at the physical screen point, or null.</summary>
     public Task<ImageHit?> FindAsync(Native.POINT point, int minSize)
     {

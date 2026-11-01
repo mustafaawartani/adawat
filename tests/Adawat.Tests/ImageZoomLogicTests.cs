@@ -118,3 +118,34 @@ public class FullSizePictureTests
     public void PictureSourcesNeedNoExtension(string url, bool expected) =>
         Assert.Equal(expected, ImageZoomLogic.IsPictureSource(url));
 }
+
+public class PreviewScaleTests
+{
+    [Fact]
+    public void BigPicturesAreShownAtRealSize()
+    {
+        Assert.Equal(1, ImageZoomLogic.MaxPreviewScale(3000, 2000, 300, 200, 560), 6);
+    }
+
+    [Fact]
+    public void SmallPicturesAreEnlargedWellPastTheirSizeOnScreen()
+    {
+        // A 240×135 thumbnail shown at 240×135: the preview must be clearly bigger, not the same small picture.
+        double scale = ImageZoomLogic.MaxPreviewScale(240, 135, 240, 135, 560);
+        Assert.True(240 * scale >= 560, $"scale {scale}");
+    }
+
+    [Fact]
+    public void EnlargingHasALimit()
+    {
+        Assert.Equal(ImageZoomLogic.MaxUpscale, ImageZoomLogic.MaxPreviewScale(40, 40, 40, 40, 560), 6);
+    }
+
+    [Fact]
+    public void ScreenCopiesOfSmallPicturesOpenBig()
+    {
+        double scale = ImageZoomLogic.MaxPreviewScale(320, 180, 320, 180, 560);
+        var layout = ImageZoomLogic.Place(320, 180, scale, new PixelRect(0, 0, 1920, 1040), 400, 500, (40, 70), 12);
+        Assert.True(layout.Window.Width > 320 * 2, $"window {layout.Window.Width}");
+    }
+}

@@ -1,4 +1,5 @@
 using System.Threading.Tasks;
+using Adawat.KeepAwake;
 using Adawat.KeyChanges;
 using Adawat.Translator;
 
@@ -14,6 +15,9 @@ public interface IAppHost
 
     /// <summary>The key changes tool (catches a key press for the settings).</summary>
     KeyRemapService KeyChanges { get; }
+
+    /// <summary>The stay-awake tool.</summary>
+    KeepAwakeService KeepAwake { get; }
 
     /// <summary>Returns the screen zoom to normal size.</summary>
     void ResetZoom();

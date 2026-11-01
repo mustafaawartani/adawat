@@ -107,12 +107,13 @@ public sealed class ImagePreviewWindow : Window
         _image.Source = image.Picture;
         _image.Width = image.PixelWidth * layout.Scale / dpiScale;
         _image.Height = image.PixelHeight * layout.Scale / dpiScale;
-        RenderOptions.SetBitmapScalingMode(_image, layout.Scale > 1.01 && image.IsScreenCapture ? BitmapScalingMode.Linear : BitmapScalingMode.HighQuality);
+        // Enlarged pictures: smooth (Fant) scaling; shrunk ones: the best downscaling.
+        RenderOptions.SetBitmapScalingMode(_image, BitmapScalingMode.HighQuality);
 
         var details = $"{image.PixelWidth} × {image.PixelHeight}";
         if (image.IsScreenCapture) details += "  ·  as shown on screen";
         else if (!string.IsNullOrWhiteSpace(image.FileName)) details += "  ·  " + image.FileName;
-        if (layout.Scale < 0.995) details += $"  ·  {layout.Scale * 100:0}%";
+        if (layout.Scale < 0.995 || layout.Scale > 1.005) details += $"  ·  {layout.Scale * 100:0}%";
         _details.Text = details;
         _hintText = hint;
         _hint.Text = hint;

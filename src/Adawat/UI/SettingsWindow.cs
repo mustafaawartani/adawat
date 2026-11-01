@@ -7,6 +7,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using Adawat.Core;
+using Adawat.KeepAwake;
 using Adawat.Ocr;
 using Adawat.Translator;
 using Wpf.Ui.Controls;
@@ -52,6 +53,7 @@ public sealed class SettingsWindow : FluentWindow
             ("Touchpad gestures", SymbolRegular.SwipeRight24, BuildGestures),
             ("Picture zoom", SymbolRegular.ImageSearch24, BuildImageZoom),
             ("Change keys", SymbolRegular.Keyboard24, BuildKeyChanges),
+            ("Stay awake", SymbolRegular.WeatherMoonOff24, BuildKeepAwake),
             ("History", SymbolRegular.History24, BuildHistory),
             ("About", SymbolRegular.Info24, BuildAbout),
         };
@@ -135,7 +137,7 @@ public sealed class SettingsWindow : FluentWindow
         var p = new StackPanel();
 
         var tips = new StackPanel();
-        tips.Children.Add(Ui.Text("Adawat runs quietly in the system tray, next to the clock. Click its icon to open the translator.", 13));
+        tips.Children.Add(Ui.Text("Adawat runs quietly in the system tray, next to the clock. Click its icon to open these settings; right-click it for the translator and more.", 13));
         foreach (var line in new[]
                  {
                      $"{S.Translator.TranslateHotkey}  —  translate the selected text in any app",
@@ -144,6 +146,7 @@ public sealed class SettingsWindow : FluentWindow
                      "Select text with the mouse  —  a small translate button appears next to it",
                      "Two-finger swipe left/right  —  back/forward;  pinch  —  zoom",
                      $"Rest the pointer on a picture  —  see it big;  {S.ImageZoom.SaveHotkey} saves it to Downloads, {S.ImageZoom.CopyHotkey} copies it",
+                     "Right-click the tray icon → Stay awake  —  keep the PC working with the lid closed for a while",
                  })
         {
             var t = Ui.Text("•  " + line, 13, secondary: true);
@@ -241,6 +244,26 @@ public sealed class SettingsWindow : FluentWindow
                 SliderRow(1, 10, t.IconSeconds, v => $"{v:0} s", v => { t.IconSeconds = Math.Round(v); Changed(); })));
         }
 
+        p.Children.Add(Ui.SectionTitle("Look of the translator"));
+        string lookNote = ThemeHelper.GlassSupported
+            ? "Glass: frosted, see-through glass with a light veil of the colors below. Color: solid colors, nothing shows through."
+            : "Glass needs Windows 11 (version 22H2 or later); here the translator uses solid colors.";
+        p.Children.Add(Ui.Card(SymbolRegular.Blur24, "Style", lookNote,
+            EnumCombo(t.Look, new Dictionary<TranslatorLook, string>
+            {
+                [TranslatorLook.Glass] = "Glass",
+                [TranslatorLook.Color] = "Color",
+            }, v => { t.Look = v; Changed(); ShowPage("Translator"); })));
+        p.Children.Add(Ui.Card(SymbolRegular.Color24, "Colors", "One color, or two colors that flow into each other. \"App color\" follows the accent color in General.",
+            TranslatorColorPicker()));
+        if (t.Look == TranslatorLook.Glass && ThemeHelper.GlassSupported)
+        {
+            p.Children.Add(Ui.Card(SymbolRegular.Eye24, "How see-through",
+                "Higher shows more of what is behind the window. If Windows' \"Transparency effects\" are off (Settings → Personalization → Colors), " +
+                "or the window is pinned and you work in another app, Windows shows the glass as a plain color.",
+                SliderRow(1, 100, t.GlassClarity, v => $"{v:0}", v => { t.GlassClarity = (int)Math.Round(v); Changed(); })));
+        }
+
         p.Children.Add(Ui.SectionTitle("Translation window"));
         p.Children.Add(Ui.Card(SymbolRegular.TextFont24, "Text size", null,
             SliderRow(12, 26, t.FontSize, v => $"{v:0}", v => { t.FontSize = Math.Round(v); Changed(); })));
@@ -279,6 +302,19 @@ public sealed class SettingsWindow : FluentWindow
             testResult.Text = await _host.TestTranslationAsync();
         }));
         p.Children.Add(Ui.Card(SymbolRegular.Globe24, "Google Translate connection", "Uses the free Google Translate service. No account or key needed.", testRow));
+        p.Children.Add(Ui.Card(SymbolRegular.BrainCircuit24, "Translation service",
+            "Same as translate.google.com (recommended): the service the Google Translate website uses, so the translations match it, " +
+            "and long text is translated as a whole. If it does not answer, Adawat uses the classic service on its own. " +
+            "Classic: the older address used by browser extensions; its translations can be weaker.",
+            EnumCombo(t.Engine, new Dictionary<TranslationEngine, string>
+            {
+                [TranslationEngine.Website] = "Same as translate.google.com",
+                [TranslationEngine.Classic] = "Classic",
+            }, v => { t.Engine = v; Changed(); })));
+        p.Children.Add(Ui.Card(SymbolRegular.TextWrap24, "Join lines broken in the middle of sentences",
+            "Text from PDFs and narrow web columns has a line break at the end of every line. Joined, Google sees whole sentences " +
+            "and translates much better. Paragraphs and lists stay as they are.",
+            Ui.Toggle(t.JoinBrokenLines, v => { t.JoinBrokenLines = v; Changed(); })));
 
         return p;
     }
@@ -398,6 +434,11 @@ public sealed class SettingsWindow : FluentWindow
                 "While zoomed, slide two fingers in any direction to move the zoomed view, like in Chrome. " +
                 "Back/forward swipes pause until you zoom out.",
                 SliderRow(1, 100, g.PanSpeed, v => $"{v:0}", v => { g.PanSpeed = (int)Math.Round(v); Changed(); })));
+            p.Children.Add(Ui.Card(SymbolRegular.CursorHover24, "When the mouse pointer reaches the edge",
+                "Stay (recommended): the pointer stops at the edge of the zoomed view and the view only moves with two fingers. " +
+                "Move the view: pushing the pointer against the edge slides the zoomed view along.",
+                EnumCombo(g.PointerMovesZoom, new Dictionary<bool, string> { [false] = "The view stays put", [true] = "Move the view" },
+                    v => { g.PointerMovesZoom = v; Changed(); })));
             p.Children.Add(Ui.Card(SymbolRegular.ArrowSortDown24, "Keep scrolling at the edge",
                 "Like Chrome: once the zoomed view reaches the edge of the screen, keep sliding and the page itself scrolls on. " +
                 "Off: the view stops at the edge.",
@@ -469,6 +510,114 @@ public sealed class SettingsWindow : FluentWindow
         p.Children.Add(Ui.Card(SymbolRegular.Games24, "Pause in full-screen apps", "Games, videos and presentations.",
             Ui.Toggle(z.DisableInFullscreen, v => { z.DisableInFullscreen = v; Changed(); })));
         p.Children.Add(AppListCard("Apps where picture zoom is off", "One program per line, e.g. photoshop.exe", z.DisabledApps, v => { z.DisabledApps = v; Changed(); }));
+        return p;
+    }
+
+    private UIElement BuildKeepAwake()
+    {
+        var k = S.KeepAwake;
+        var awake = _host.KeepAwake;
+        var p = new StackPanel();
+
+        var status = Ui.Text("", 12, secondary: true);
+        var startButton = Ui.Button("Start", () => awake.StartWithSettings(), primary: true, icon: SymbolRegular.Play24);
+        var stopButton = Ui.Button("Turn off", () => awake.Stop(), icon: SymbolRegular.Stop24);
+        stopButton.Margin = new Thickness(8, 0, 0, 0);
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal };
+        buttons.Children.Add(startButton);
+        buttons.Children.Add(stopButton);
+        var main = Ui.Card(SymbolRegular.WeatherMoonOff24, "Stay awake",
+            "Keep the PC working, also with the lid closed: downloads, uploads and programs go on and Wi-Fi stays connected. " +
+            "When the time is up, it can sleep again.", buttons);
+        if (main.Header is StackPanel header)
+        {
+            status.Margin = new Thickness(0, 6, 0, 0);
+            header.Children.Add(status);
+        }
+        void Refresh()
+        {
+            status.Text = awake.Status;
+            status.SetResourceReference(TextBlock.ForegroundProperty, awake.IsOn ? "AccentTextFillColorPrimaryBrush" : "TextFillColorSecondaryBrush");
+            startButton.Content = awake.IsOn ? "Start again" : "Start";
+            stopButton.IsEnabled = awake.IsOn;
+        }
+        Refresh();
+        awake.Changed += Refresh;
+        // The page is rebuilt when shown again; stop updating the old one.
+        main.Unloaded += (_, _) => awake.Changed -= Refresh;
+        main.Loaded += (_, _) =>
+        {
+            awake.Changed -= Refresh;
+            awake.Changed += Refresh;
+            Refresh();
+        };
+        p.Children.Add(main);
+
+        var lengths = new Dictionary<int, string>();
+        foreach (int minutes in new[] { 30, 60, 120, 180, 240, 480, 0 }) lengths[minutes] = KeepAwakeService.LengthName(minutes);
+        lengths[KeepAwakeSettings.CustomLength] = "Another length…";
+        lengths[KeepAwakeSettings.UntilClockTime] = "Until a time of day…";
+        p.Children.Add(Ui.Card(SymbolRegular.Timer24, "How long", "Starting again (or picking another length while it is on) counts from now.",
+            EnumCombo(k.Minutes, lengths, v =>
+            {
+                k.Minutes = v;
+                Changed();
+                if (awake.IsOn) awake.StartWithSettings();
+                ShowPage("Stay awake");
+            })));
+        if (k.Minutes == KeepAwakeSettings.CustomLength)
+        {
+            p.Children.Add(Ui.Card(SymbolRegular.TimePicker24, "Length", "From 5 minutes to 12 hours.",
+                SliderRow(5, 720, k.CustomMinutes, v => KeepAwakeService.Remaining(TimeSpan.FromMinutes(Math.Round(v / 5) * 5)),
+                    v =>
+                    {
+                        k.CustomMinutes = (int)(Math.Round(v / 5) * 5);
+                        Changed();
+                        if (awake.IsOn) awake.StartWithSettings();
+                    })));
+        }
+        else if (k.Minutes == KeepAwakeSettings.UntilClockTime)
+        {
+            var clock = new Wpf.Ui.Controls.TextBox { Text = k.UntilClock, MinWidth = 140, PlaceholderText = "18:30" };
+            var hint = Ui.Text("", 12, secondary: true);
+            hint.Margin = new Thickness(0, 4, 0, 0);
+            void ShowEnd()
+            {
+                hint.Text = KeepAwakeService.TryParseClock(clock.Text, DateTime.Now, out var end)
+                    ? $"Until {end:t}{(end.Date > DateTime.Today ? " tomorrow" : "")}"
+                    : "Write the time like 18:30 or 6:30 PM";
+            }
+            clock.TextChanged += (_, _) => ShowEnd();
+            clock.LostFocus += (_, _) =>
+            {
+                if (clock.Text == k.UntilClock) return;
+                k.UntilClock = clock.Text.Trim();
+                Changed();
+                if (awake.IsOn && KeepAwakeService.TryParseClock(k.UntilClock, DateTime.Now, out _)) awake.StartWithSettings();
+            };
+            ShowEnd();
+            var box = new StackPanel();
+            box.Children.Add(clock);
+            box.Children.Add(hint);
+            p.Children.Add(Ui.Card(SymbolRegular.Clock24, "Until", "The next time the clock shows this time (today, or tomorrow if it has passed).", box));
+        }
+
+        p.Children.Add(Ui.SectionTitle("While staying awake"));
+        p.Children.Add(Ui.Card(SymbolRegular.Laptop24, "Keep working with the lid closed",
+            "Closing the lid does nothing while Stay awake is on (only the screen goes dark). Afterwards Windows' own " +
+            "\"When I close the lid\" setting is put back exactly as it was.",
+            Ui.Toggle(k.WhileLidClosed, v => { k.WhileLidClosed = v; Changed(); })));
+        p.Children.Add(Ui.Card(SymbolRegular.WeatherSunny24, "Keep the screen on", "Off: the screen may turn off as usual; the PC keeps working.",
+            Ui.Toggle(k.KeepScreenOn, v => { k.KeepScreenOn = v; Changed(); })));
+        p.Children.Add(Ui.Card(SymbolRegular.WeatherMoon24, "Sleep when the time is up, if the lid is closed",
+            "Otherwise the PC sleeps the usual way, after the time set in Windows.",
+            Ui.Toggle(k.SleepWhenDoneIfLidClosed, v => { k.SleepWhenDoneIfLidClosed = v; Changed(); })));
+
+        p.Children.Add(Ui.SectionTitle("Good to know"));
+        p.Children.Add(Ui.Card(SymbolRegular.Info24, "Quick start from the tray",
+            "Right-click Adawat's tray icon → Stay awake → 30 minutes, 1 hour, 2 hours, 4 hours or until you turn it off.", null));
+        p.Children.Add(Ui.Card(SymbolRegular.Warning24, "Laptop bags",
+            "A closed laptop that keeps working gets warm. Don't put it in a bag while Stay awake is on.", null));
         return p;
     }
 
@@ -746,6 +895,71 @@ public sealed class SettingsWindow : FluentWindow
     }
 
     // ---- Building blocks ------------------------------------------------------------------
+
+    /// <summary>
+    /// The translator's colors: the app's accent, single colors and two-color pairs (split swatches),
+    /// in two rows; the chosen one has a ring around it.
+    /// </summary>
+    private UIElement TranslatorColorPicker()
+    {
+        var t = S.Translator;
+        var rows = new StackPanel();
+        var singles = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        var pairs = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 4, 0, 0) };
+        rows.Children.Add(singles);
+        rows.Children.Add(pairs);
+        var rings = new List<(TranslatorColors Choice, Border Ring)>();
+
+        void Refresh()
+        {
+            var ringColor = new SolidColorBrush(ThemeHelper.AccentColor);
+            foreach (var (choice, ring) in rings) ring.BorderBrush = choice == t.Colors ? ringColor : Brushes.Transparent;
+        }
+
+        void Add(Panel row, TranslatorColors choice, Brush fill, string name)
+        {
+            var dot = new Border { Width = 20, Height = 20, CornerRadius = new CornerRadius(10), Background = fill };
+            var ring = new Border
+            {
+                Width = 30,
+                Height = 30,
+                CornerRadius = new CornerRadius(15),
+                BorderThickness = new Thickness(2),
+                Child = dot,
+                Margin = new Thickness(2, 0, 2, 0),
+                Cursor = Cursors.Hand,
+                ToolTip = name,
+                Background = Brushes.Transparent,
+            };
+            // React to the press: the settings row captures the mouse, so a MouseUp would never arrive.
+            ring.PreviewMouseLeftButtonDown += (_, e) =>
+            {
+                e.Handled = true;
+                t.Colors = choice;
+                Refresh();
+                Changed();
+            };
+            ring.MouseEnter += (_, _) => dot.Opacity = 0.8;
+            ring.MouseLeave += (_, _) => dot.Opacity = 1;
+            rings.Add((choice, ring));
+            row.Children.Add(ring);
+        }
+
+        var (appA, _) = ThemeHelper.TranslatorPair(TranslatorColors.AppAccent);
+        var app = new LinearGradientBrush(new GradientStopCollection
+        {
+            new(appA, 0), new(appA, 0.5), new(Colors.White, 0.5), new(Colors.White, 1),
+        }, new Point(0, 0), new Point(1, 1));
+        Add(singles, TranslatorColors.AppAccent, app, "App color (the accent color in General)");
+        foreach (var (choice, (a, b, name)) in ThemeHelper.TranslatorPalettes)
+        {
+            bool two = a != b;
+            Brush fill = two ? new LinearGradientBrush(a, b, new Point(0, 0), new Point(1, 1)) : new SolidColorBrush(a);
+            Add(two ? pairs : singles, choice, fill, name);
+        }
+        Refresh();
+        return rows;
+    }
 
     /// <summary>A row of round color swatches; the chosen one has a ring around it.</summary>
     private UIElement AccentPicker()

@@ -91,6 +91,7 @@ public sealed class GestureService : IDisposable
         _magnifier.ScrollPastEdges = g.ScrollPastZoomEdges;
         _magnifier.PanSpeed = 0.6 + 2.4 * Math.Clamp(g.PanSpeed, 1, 100) / 100.0;
         _magnifier.InvertPan = g.InvertPan;
+        _magnifier.PointerMovesView = g.PointerMovesZoom;
         _magnifier.SnapToWholeLevels = g.SnapZoomLevels;
         _magnifier.SmoothEdges = g.SmoothZoomEdges;
         bool screenZoom = g.Enabled && g.PinchEnabled && g.PinchAction == PinchAction.ScreenZoom;

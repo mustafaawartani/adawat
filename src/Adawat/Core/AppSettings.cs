@@ -21,6 +21,28 @@ public enum SwipeAction { MouseButtons, AltArrows, BrowserKeys }
 
 public enum PinchAction { ScreenZoom, CtrlWheel, CtrlPlusMinus }
 
+/// <summary>How the translator window looks: frosted glass that lets what is behind show through, or solid color.</summary>
+public enum TranslatorLook { Glass, Color }
+
+/// <summary>
+/// The translator's colors: the app's accent, one color, or two colors that flow into each other.
+/// </summary>
+public enum TranslatorColors
+{
+    AppAccent,
+    Blue, Indigo, Violet, Teal, Green, Rose, Orange, Graphite,
+    Ocean, Sunset, Aurora, Berry, Sky, Peach, Forest, Dusk,
+}
+
+/// <summary>Which Google Translate service translates.</summary>
+public enum TranslationEngine
+{
+    /// <summary>The service behind translate.google.com itself (falls back to Classic when it fails).</summary>
+    Website,
+    /// <summary>The older free address used by browser extensions.</summary>
+    Classic,
+}
+
 public sealed class AppSettings
 {
     public bool StartWithWindows { get; set; } = true;
@@ -36,6 +58,7 @@ public sealed class AppSettings
     public GestureSettings Gestures { get; set; } = new();
     public ImageZoomSettings ImageZoom { get; set; } = new();
     public KeyRemapSettings KeyChanges { get; set; } = new();
+    public KeepAwakeSettings KeepAwake { get; set; } = new();
 }
 
 public sealed class TranslatorSettings
@@ -68,6 +91,18 @@ public sealed class TranslatorSettings
     public bool ShowTransliteration { get; set; } = true;
     public bool AutoCopyTranslation { get; set; }
     public bool ShowOpenInGoogle { get; set; } = true;
+
+    public TranslatorLook Look { get; set; } = TranslatorLook.Glass;
+    public TranslatorColors Colors { get; set; } = TranslatorColors.AppAccent;
+    /// <summary>1..100: how see-through the glass is (higher shows more of what is behind the window).</summary>
+    public int GlassClarity { get; set; } = 60;
+
+    public TranslationEngine Engine { get; set; } = TranslationEngine.Website;
+    /// <summary>
+    /// Text copied from PDFs and narrow web columns has a line break at the end of every line, in the
+    /// middle of sentences; Google then translates each line on its own. Join such lines first.
+    /// </summary>
+    public bool JoinBrokenLines { get; set; } = true;
 
     public CaptureMethod CaptureMethod { get; set; } = CaptureMethod.Automatic;
     public List<string> DisabledApps { get; set; } = new();
@@ -130,6 +165,11 @@ public sealed class GestureSettings
     public int PanSpeed { get; set; } = 40;
     /// <summary>False: the picture follows the fingers, like Chrome.</summary>
     public bool InvertPan { get; set; }
+    /// <summary>
+    /// True: pushing the mouse pointer against the edge of the zoomed view moves the view along.
+    /// False: the pointer stops at the edge and only two fingers move the view.
+    /// </summary>
+    public bool PointerMovesZoom { get; set; }
     /// <summary>Set while Adawat has paused Windows' two-finger scrolling during a zoom.</summary>
     public bool ScrollPausedByAdawat { get; set; }
     /// <summary>
@@ -187,6 +227,39 @@ public sealed class KeyRemap
 
     /// <summary>The Alt shortcuts kept by default when Alt is made to work as Ctrl: Tab, F4, Esc, Space.</summary>
     public static List<int> DefaultAltKeep() => new() { 0x09, 0x73, 0x1B, 0x20 };
+}
+
+/// <summary>Stay awake: keep the PC working (also with the lid closed) for a while, then let it sleep again.</summary>
+public sealed class KeepAwakeSettings
+{
+    /// <summary>How long, in minutes: 0 = until turned off, <see cref="CustomLength"/> = <see cref="CustomMinutes"/>, <see cref="UntilClockTime"/> = until <see cref="UntilClock"/>.</summary>
+    public int Minutes { get; set; } = 60;
+    public int CustomMinutes { get; set; } = 90;
+    /// <summary>A time of day such as "18:30", for <see cref="UntilClockTime"/>.</summary>
+    public string UntilClock { get; set; } = "18:00";
+
+    public const int CustomLength = -1;
+    public const int UntilClockTime = -2;
+    /// <summary>Closing the lid does nothing while staying awake (Windows' lid setting is put back afterwards).</summary>
+    public bool WhileLidClosed { get; set; } = true;
+    /// <summary>Also keep the screen from turning off.</summary>
+    public bool KeepScreenOn { get; set; }
+    /// <summary>When the time is up with the lid closed, put the PC to sleep right away.</summary>
+    public bool SleepWhenDoneIfLidClosed { get; set; } = true;
+
+    /// <summary>Set while Adawat has changed the lid setting, so it can be put back even after a crash.</summary>
+    public LidBackup? LidBackup { get; set; }
+    /// <summary>When staying awake ends (UTC), null when off or until turned off. Kept so a restart of Adawat goes on.</summary>
+    public DateTime? Until { get; set; }
+    public bool Active { get; set; }
+}
+
+/// <summary>Windows' "when I close the lid" setting of one power plan, as it was before Adawat changed it.</summary>
+public sealed class LidBackup
+{
+    public Guid Scheme { get; set; }
+    public uint PluggedIn { get; set; }
+    public uint OnBattery { get; set; }
 }
 
 /// <summary>Loads and saves <see cref="AppSettings"/> as JSON in %AppData%\Adawat.</summary>

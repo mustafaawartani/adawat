@@ -7,6 +7,7 @@ using System.Windows.Threading;
 using Adawat.Core;
 using Adawat.Gestures;
 using Adawat.ImageZoom;
+using Adawat.KeepAwake;
 using Adawat.KeyChanges;
 using Adawat.Ocr;
 using Adawat.Translator;
@@ -31,6 +32,7 @@ public sealed class App : Application, IAppHost
     private GestureService _gestures = null!;
     private ImageZoomService _imageZoom = null!;
     private KeyRemapService _keyChanges = null!;
+    private KeepAwakeService _keepAwake = null!;
     private DispatcherTimer _hookWatch = null!;
     private TrayIcon _tray = null!;
     private TranslatorWindow? _popup;
@@ -91,6 +93,8 @@ public sealed class App : Application, IAppHost
         _gestures = new GestureService(Settings, _messages);
         _imageZoom = new ImageZoomService(Settings, Hotkeys);
         _keyChanges = new KeyRemapService(Settings);
+        _keepAwake = new KeepAwakeService(Settings, _messages, () => SettingsStore.Save(Settings));
+        _keepAwake.Problem += (title, text) => Toast.Show(title, text, success: false, seconds: 8);
         _mouseHook = new MouseHook();
         _mouseHook.MouseEvent += OnMouse;
         _mouseHook.BlockWheel = _gestures.ShouldBlockWheel;
@@ -101,7 +105,8 @@ public sealed class App : Application, IAppHost
             openSettings: () => OpenSettings(),
             openSettingsPage: page => OpenSettings(page),
             settingsChanged: SettingsChanged,
-            exit: ExitApp);
+            exit: ExitApp,
+            keepAwake: _keepAwake);
 
         _saveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
         _saveTimer.Tick += (_, _) =>
@@ -191,6 +196,9 @@ public sealed class App : Application, IAppHost
         var o = Settings.Ocr;
         var g = Settings.Gestures;
 
+        ThemeHelper.SetTranslatorLook(t.Look, t.Colors, t.GlassClarity);
+        _google.UseWebsite = t.Engine == TranslationEngine.Website;
+
         Hotkeys.Set("translate", t.Enabled ? t.TranslateHotkey : null, () => Dispatcher.BeginInvoke(_translator.TranslateSelection));
         Hotkeys.Set("openbox", t.Enabled ? t.OpenBoxHotkey : null, () => Dispatcher.BeginInvoke(_translator.OpenBox));
         Hotkeys.Set("ocr", o.Enabled ? o.Hotkey : null, () => Dispatcher.BeginInvoke(_ocr.CaptureScreen));
@@ -206,6 +214,7 @@ public sealed class App : Application, IAppHost
         _gestures.Apply();
         _imageZoom.Apply();
         _keyChanges.Apply();
+        _keepAwake.Apply();
         StartupManager.ApplyRunKey(Settings);
         if (Settings.RunElevated && _appliedStartWithWindows != null && _appliedStartWithWindows != Settings.StartWithWindows)
         {
@@ -259,6 +268,8 @@ public sealed class App : Application, IAppHost
     public void ResetZoom() => _gestures.ResetZoom();
 
     public KeyRemapService KeyChanges => _keyChanges;
+
+    public KeepAwakeService KeepAwake => _keepAwake;
 
     public bool TouchpadPresent => _touchpadPresent ??= TouchpadReader.IsTouchpadPresent();
 
@@ -314,6 +325,7 @@ public sealed class App : Application, IAppHost
         try
         {
             _saveTimer.Stop();
+            _keepAwake.Dispose(); // gives back the lid setting; saved just below
             SettingsStore.Save(Settings);
             _mouseHook.Dispose();
             Hotkeys.Dispose();

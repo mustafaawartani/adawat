@@ -28,7 +28,7 @@ public sealed class ImageZoomService : IDisposable
     private Native.POINT _lastPos;
     private Native.POINT? _lastLookup;
     private long _lookupMs;
-    private bool _retried;
+    private int _retries;
     private long _restSince;
     private bool _looking;
     private ImageHit? _hit;          // the picture being loaded or shown
@@ -61,7 +61,8 @@ public sealed class ImageZoomService : IDisposable
     {
         var p = WindowInfo.CursorPosition();
         long now = Environment.TickCount64;
-        if (p.X != _lastPos.X || p.Y != _lastPos.Y)
+        // A pointer that shakes by a pixel or two (touchpads do) still counts as resting.
+        if (Math.Abs(p.X - _lastPos.X) > RestSlack || Math.Abs(p.Y - _lastPos.Y) > RestSlack)
         {
             _lastPos = p;
             _restSince = now;
@@ -73,16 +74,17 @@ public sealed class ImageZoomService : IDisposable
             return;
         }
         if (_looking || now - _restSince < Math.Clamp(S.HoverDelayMs, 0, 3000)) return;
-        if (_lastLookup is { } last && last.X == p.X && last.Y == p.Y)
+        if (_lastLookup is { } last && Math.Abs(last.X - p.X) <= RestSlack && Math.Abs(last.Y - p.Y) <= RestSlack)
         {
-            // Browsers build their accessibility tree only when first asked, so the first look often
-            // finds nothing: look once more a moment later instead of waiting for the pointer to move.
-            if (_retried || now - _lookupMs < 700) return;
-            _retried = true;
+            // Browsers build their accessibility tree only when first asked, and pages still loading
+            // add pictures late, so the first look often finds nothing: look a few more times, a
+            // little later each time, instead of waiting for the pointer to move.
+            if (_retries >= RetryDelaysMs.Length || now - _lookupMs < RetryDelaysMs[_retries]) return;
+            _retries++;
         }
         else
         {
-            _retried = false;
+            _retries = 0;
         }
         if (!ModifierHeld() || ButtonDown()) return;
 
@@ -91,10 +93,15 @@ public sealed class ImageZoomService : IDisposable
         if (WindowInfo.ListContains(S.DisabledApps, WindowInfo.ProcessName(root))) return;
         if (S.DisableInFullscreen && !ImageFinder.IsDesktop(root) && WindowInfo.IsFullscreenAppRunning()) return;
 
+        _finder ??= new ImageFinder();
+        if (_finder.IsBusy) return; // still waiting for a slow app: ask again once it has answered
         _lastLookup = p;
         _lookupMs = now;
         _ = LookAsync(p);
     }
+
+    private const int RestSlack = 3;
+    private static readonly int[] RetryDelaysMs = { 600, 1200, 2500 };
 
     private async Task LookAsync(Native.POINT p)
     {
@@ -102,9 +109,8 @@ public sealed class ImageZoomService : IDisposable
         ImageHit? hit;
         try
         {
-            _finder ??= new ImageFinder();
-            var find = _finder.FindAsync(p, Math.Max(16, S.MinSize));
-            hit = await Task.WhenAny(find, Task.Delay(1500)) == find ? find.Result : null;
+            var find = _finder!.FindAsync(p, Math.Max(16, S.MinSize));
+            hit = await Task.WhenAny(find, Task.Delay(3000)) == find ? find.Result : null;
         }
         finally
         {
@@ -112,7 +118,7 @@ public sealed class ImageZoomService : IDisposable
         }
 
         var cursor = WindowInfo.CursorPosition();
-        if (hit == null || _hit != null || !hit.Bounds.Contains(cursor.X, cursor.Y)) return;
+        if (hit == null || _hit != null || !hit.Bounds.Contains(cursor.X, cursor.Y, slack: RestSlack)) return;
         if (hit.FilePath == null && hit.Url == null && !S.EnlargeScreenPictures) return;
         Log.Info($"Picture zoom: opening {hit.FilePath ?? hit.Url ?? "a picture from the screen"} ({hit.Bounds.Width}×{hit.Bounds.Height} on screen)");
 
@@ -136,9 +142,10 @@ public sealed class ImageZoomService : IDisposable
         double dpi = WindowInfo.ScaleAt(cursor);
         var work = WindowInfo.WorkAreaAt(cursor);
         var chrome = ImagePreviewWindow.ChromeDip;
-        // Real pictures are shown at most at real size. A copy of the screen (no address for the real
-        // picture) only up to 2x: more than that is too blurry to be worth it.
-        double maxScale = image.IsScreenCapture ? 2 : 1;
+        // Big pictures are shown at real size (or as big as the screen allows). Small ones, and copies
+        // of the screen, are enlarged so the preview is clearly bigger than the picture on the page.
+        double maxScale = ImageZoomLogic.MaxPreviewScale(image.PixelWidth, image.PixelHeight, hit.Bounds.Width, hit.Bounds.Height,
+            (int)Math.Round(ImageZoomLogic.MinPreviewSideDip * dpi));
         var layout = ImageZoomLogic.Place(image.PixelWidth, image.PixelHeight, maxScale,
             new PixelRect(work.Left, work.Top, work.Width, work.Height), cursor.X, cursor.Y,
             ((int)Math.Round(chrome.Width * dpi), (int)Math.Round(chrome.Height * dpi)), (int)Math.Round(12 * dpi));
@@ -147,7 +154,7 @@ public sealed class ImageZoomService : IDisposable
         double shownW = image.PixelWidth * layout.Scale, shownH = image.PixelHeight * layout.Scale;
         if (shownW < hit.Bounds.Width * 1.15 && shownH < hit.Bounds.Height * 1.15)
         {
-            Log.Info($"Picture zoom: the full picture ({image.PixelWidth}×{image.PixelHeight}) is no bigger than on screen; nothing to enlarge");
+            Log.Info($"Picture zoom: the picture already fills the screen ({hit.Bounds.Width}×{hit.Bounds.Height}); nothing to enlarge");
             return;
         }
 
@@ -250,7 +257,11 @@ public sealed class ImageZoomService : IDisposable
         if (kind is MouseEventKind.Wheel or MouseEventKind.LeftDown or MouseEventKind.OtherButtonDown)
             _poll.Dispatcher.BeginInvoke(() =>
             {
-                if (_hit != null) Hide();
+                if (_hit == null) return;
+                Hide();
+                // Closed on purpose: open again only once the pointer moves, not a moment later on the same spot.
+                _lastLookup = WindowInfo.CursorPosition();
+                _retries = RetryDelaysMs.Length;
             });
     }
 

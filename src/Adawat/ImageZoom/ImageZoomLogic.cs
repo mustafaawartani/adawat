@@ -231,6 +231,27 @@ public static class ImageZoomLogic
         return new string(chars.ToArray()).Trim();
     }
 
+    /// <summary>The preview's longer side is at least this long (DIPs), screen permitting, so small pictures open big.</summary>
+    public const int MinPreviewSideDip = 560;
+
+    /// <summary>Small pictures and copies of the screen are enlarged at most this much (more is only blur).</summary>
+    public const double MaxUpscale = 4;
+
+    /// <summary>
+    /// The largest scale to show a <paramref name="imageWidth"/>×<paramref name="imageHeight"/> picture at,
+    /// when it appears <paramref name="shownWidth"/>×<paramref name="shownHeight"/> on screen: real size for
+    /// big pictures, and for small ones enough to make the preview at least 2.5 times the size on screen
+    /// and at least <paramref name="minSide"/> pixels on its longer side (never more than <see cref="MaxUpscale"/>).
+    /// The screen size limits it further when the preview is placed.
+    /// </summary>
+    public static double MaxPreviewScale(int imageWidth, int imageHeight, int shownWidth, int shownHeight, int minSide)
+    {
+        double imageLong = Math.Max(1, Math.Max(imageWidth, imageHeight));
+        double shownLong = Math.Max(shownWidth, shownHeight);
+        double wanted = Math.Max(shownLong * 2.5, minSide) / imageLong;
+        return Math.Clamp(wanted, 1, MaxUpscale);
+    }
+
     /// <summary>
     /// Places the preview of a <paramref name="imageWidth"/>×<paramref name="imageHeight"/> picture next to
     /// the pointer, on the side with the most room, as big as possible but never above

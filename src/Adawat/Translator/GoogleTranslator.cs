@@ -21,18 +21,33 @@ public sealed record TranslationResult(
     string? SourceTransliteration,
     IReadOnlyList<DictionaryEntry> Dictionary);
 
-public sealed class TranslationException : Exception
+public class TranslationException : Exception
 {
     public TranslationException(string message, Exception? inner = null) : base(message, inner) { }
 }
 
+/// <summary>The website's service joined the paragraphs into one; this text is translated the classic way.</summary>
+public sealed class ParagraphsLostException : TranslationException
+{
+    public ParagraphsLostException() : base("the paragraphs were not kept") { }
+}
+
 /// <summary>
-/// Google Translate through the free endpoint the Chrome extension uses (no account or key).
+/// Google Translate without an account or key. First the service behind translate.google.com itself
+/// (the same translations as the website, whole text at once); if that fails or answers in a way
+/// Adawat does not understand, the older free address used by browser extensions.
 /// </summary>
 public sealed class GoogleTranslator
 {
     private const int MaxChunk = 1000; // keeps the request URL short even for Arabic text
+    private const int MaxWebsiteChunk = 4500; // the website takes up to 5000 characters at once
     private static readonly HttpClient Http = CreateClient();
+
+    /// <summary>Use the website's service first (see <see cref="TranslationEngine"/>).</summary>
+    public bool UseWebsite { get; set; } = true;
+
+    private static DateTime _websiteOffUntil;
+    private static bool _loggedWebsite;
 
     private static HttpClient CreateClient()
     {
@@ -53,12 +68,46 @@ public sealed class GoogleTranslator
         text = text.Trim();
         if (text.Length == 0) throw new TranslationException("Nothing to translate.");
 
+        if (UseWebsite && DateTime.UtcNow >= _websiteOffUntil)
+        {
+            try
+            {
+                var result = await TranslateWithWebsiteAsync(text, source, target, token);
+                if (!_loggedWebsite)
+                {
+                    _loggedWebsite = true;
+                    LogInfo?.Invoke("Translating with the translate.google.com service");
+                }
+                return result;
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (ParagraphsLostException)
+            {
+                // Only this text: go on below.
+            }
+            catch (Exception ex)
+            {
+                // Unofficial and may change: use the classic address for a while, then try again.
+                _websiteOffUntil = DateTime.UtcNow.AddMinutes(10);
+                _loggedWebsite = false;
+                LogInfo?.Invoke($"The translate.google.com service did not work ({ex.Message}); using the classic address for 10 minutes");
+            }
+        }
+
         var chunks = TextChunker.Split(text, MaxChunk);
         var parts = new List<TranslationResult>();
         foreach (var chunk in chunks)
         {
             parts.Add(await TranslateChunkAsync(chunk.Text, source, target, withExtras: chunks.Count == 1, token));
         }
+        return Combine(text, target, chunks, parts);
+    }
+
+    private static TranslationResult Combine(string text, string target, IReadOnlyList<TextChunker.Chunk> chunks, List<TranslationResult> parts)
+    {
         if (parts.Count == 1) return parts[0] with { SourceText = text };
 
         var sb = new StringBuilder();
@@ -69,6 +118,56 @@ public sealed class GoogleTranslator
         }
         var detected = parts.GroupBy(p => p.SourceLanguage).OrderByDescending(g => g.Count()).First().Key;
         return new TranslationResult(text, sb.ToString().TrimEnd(), detected, target, null, null, Array.Empty<DictionaryEntry>());
+    }
+
+    private const string WebsiteUrl =
+        "https://translate.google.com/_/TranslateWebserverUi/data/batchexecute?rpcids=MkEWBc&source-path=%2F&hl=en&soc-app=1&soc-platform=1&soc-device=1&rt=c";
+
+    /// <summary>The website's service: the whole text (up to 4500 characters a request) with its context.</summary>
+    private static async Task<TranslationResult> TranslateWithWebsiteAsync(string text, string source, string target, CancellationToken token)
+    {
+        var chunks = TextChunker.Split(text, MaxWebsiteChunk);
+        // A single word or short phrase: the dictionary and pronunciation come from the classic address,
+        // asked at the same time. If that fails, the translation still shows.
+        Task<TranslationResult?>? extras = chunks.Count == 1 && text.Length <= 60 && !text.Contains('\n')
+            ? ExtrasAsync(text, source, target, token)
+            : null;
+
+        var parts = new List<TranslationResult>();
+        foreach (var chunk in chunks) parts.Add(await WebsiteChunkAsync(chunk.Text, source, target, token));
+        var result = Combine(text, target, chunks, parts);
+
+        if (extras != null && await extras is { } more)
+        {
+            result = result with
+            {
+                Dictionary = more.Dictionary,
+                Transliteration = result.Transliteration ?? more.Transliteration,
+                SourceTransliteration = result.SourceTransliteration ?? more.SourceTransliteration,
+            };
+        }
+        return result;
+    }
+
+    private static async Task<TranslationResult?> ExtrasAsync(string text, string source, string target, CancellationToken token)
+    {
+        try
+        {
+            return await TranslateChunkAsync(text, source, target, withExtras: true, token);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static async Task<TranslationResult> WebsiteChunkAsync(string text, string source, string target, CancellationToken token)
+    {
+        using var content = new FormUrlEncodedContent(new[] { new KeyValuePair<string, string>("f.req", WebsiteResponseParser.Request(text, source, target)) });
+        using var response = await Http.PostAsync(WebsiteUrl, content, token);
+        if (!response.IsSuccessStatusCode) throw new TranslationException($"the service answered {(int)response.StatusCode}");
+        var body = await response.Content.ReadAsStringAsync(token);
+        return WebsiteResponseParser.Parse(body, text, source, target);
     }
 
     /// <summary>
@@ -151,6 +250,168 @@ public sealed class GoogleTranslator
         }
         url.Append("&q=").Append(Uri.EscapeDataString(text));
         return url.ToString();
+    }
+}
+
+/// <summary>
+/// Builds the request for and reads the answer of the service behind translate.google.com
+/// ("batchexecute", call MkEWBc). The answer is checked strictly: anything unexpected throws, and
+/// the classic address is used instead.
+/// </summary>
+public static class WebsiteResponseParser
+{
+    /// <summary>The f.req form value for translating <paramref name="text"/>.</summary>
+    public static string Request(string text, string source, string target)
+    {
+        var inner = JsonSerializer.Serialize(new object?[] { new object?[] { text, source, target, true }, new object?[] { null } });
+        return JsonSerializer.Serialize(new object?[] { new object?[] { new object?[] { "MkEWBc", inner, null, "generic" } } });
+    }
+
+    public static TranslationResult Parse(string body, string sourceText, string source, string target)
+    {
+        var payload = FindPayload(body) ?? throw new TranslationException("no translation in the answer");
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            var root = doc.RootElement;
+            // root[1][0][0]: the translation; [5] its pieces (sentences), each piece [0] the text;
+            // [3] true when the pieces are joined with spaces; [1] how the translation is read.
+            var block = At(At(At(root, 1), 0), 0);
+            var pieces = At(block, 5);
+            if (pieces.ValueKind != JsonValueKind.Array || pieces.GetArrayLength() == 0) throw new TranslationException("no translation pieces");
+            bool spaced = At(block, 3).ValueKind == JsonValueKind.True;
+            var texts = new List<string>();
+            foreach (var piece in pieces.EnumerateArray())
+            {
+                var t = At(piece, 0);
+                if (t.ValueKind != JsonValueKind.String) throw new TranslationException("a translation piece is not text");
+                texts.Add(t.GetString() ?? "");
+            }
+            var translation = string.Join(spaced ? " " : "", texts).Trim();
+            if (translation.Length == 0) throw new TranslationException("empty translation");
+            // Paragraphs must come back as paragraphs (the classic address keeps them).
+            if (sourceText.Contains('\n') && !translation.Contains('\n')) throw new ParagraphsLostException();
+
+            string? detected = new[] { Text(At(root, 2)), Text(At(At(root, 0), 2)), Text(At(At(root, 1), 3)) }
+                .FirstOrDefault(code => code != null && code != "auto" && LooksLikeLanguage(code));
+            // The detected language decides the "already in that language" fallback, so it must be known.
+            if (detected == null)
+            {
+                if (source == "auto") throw new TranslationException("no detected language in the answer");
+                detected = source;
+            }
+            return new TranslationResult(sourceText, translation, detected, target,
+                NonEmpty(Text(At(block, 1))), NonEmpty(Text(At(At(root, 0), 0))), Array.Empty<DictionaryEntry>());
+        }
+        catch (JsonException ex)
+        {
+            throw new TranslationException("the answer could not be read", ex);
+        }
+    }
+
+    /// <summary>The inner JSON of the ["wrb.fr","MkEWBc","…"] entry, from any of the answer's lines.</summary>
+    private static string? FindPayload(string body)
+    {
+        if (body.StartsWith(")]}'", StringComparison.Ordinal)) body = body[4..];
+        foreach (var raw in body.Split('\n'))
+        {
+            var line = raw.Trim();
+            if (!line.StartsWith('[')) continue;
+            try
+            {
+                using var doc = JsonDocument.Parse(line);
+                if (Search(doc.RootElement) is { } found) return found;
+            }
+            catch (JsonException)
+            {
+            }
+        }
+        return null;
+
+        static string? Search(JsonElement element)
+        {
+            if (element.ValueKind != JsonValueKind.Array) return null;
+            if (element.GetArrayLength() >= 3 && Text(element[0]) == "wrb.fr" && Text(element[1]) == "MkEWBc" && Text(element[2]) is { Length: > 0 } inner)
+                return inner;
+            foreach (var child in element.EnumerateArray())
+            {
+                if (Search(child) is { } found) return found;
+            }
+            return null;
+        }
+    }
+
+    /// <summary>"en", "ar", "zh-CN", "haw"…</summary>
+    private static bool LooksLikeLanguage(string code) =>
+        System.Text.RegularExpressions.Regex.IsMatch(code, "^[a-z]{2,3}(-[A-Za-z]{2,4})?$");
+
+    private static JsonElement At(JsonElement element, int index) =>
+        element.ValueKind == JsonValueKind.Array && element.GetArrayLength() > index ? element[index] : default;
+
+    private static string? Text(JsonElement element) => element.ValueKind == JsonValueKind.String ? element.GetString() : null;
+
+    private static string? NonEmpty(string? s) => string.IsNullOrWhiteSpace(s) ? null : s;
+}
+
+/// <summary>
+/// Text copied from PDFs, e-mails and narrow web columns breaks at the end of every line, in the
+/// middle of sentences. Google translates every line on its own then, which gives broken, poor
+/// translations; joining those lines first gives the translation the whole sentence.
+/// </summary>
+public static class TextCleaner
+{
+    public static string JoinBrokenLines(string text)
+    {
+        var lines = text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+        if (lines.Length < 2) return text;
+        var sb = new StringBuilder(text.Length);
+        for (int i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i];
+            if (i == 0)
+            {
+                sb.Append(line);
+                continue;
+            }
+            var previous = lines[i - 1].TrimEnd();
+            var current = line.TrimStart();
+            if (ShouldJoin(previous, current))
+            {
+                // "inter-\nnational" -> "international"; otherwise a space.
+                if (previous.Length > 1 && previous[^1] == '-' && char.IsLetter(previous[^2]) && current.Length > 0 && char.IsLower(current[0]))
+                {
+                    while (sb.Length > 0 && char.IsWhiteSpace(sb[^1])) sb.Length--;
+                    sb.Length--; // the hyphen
+                }
+                else
+                {
+                    while (sb.Length > 0 && char.IsWhiteSpace(sb[^1])) sb.Length--;
+                    sb.Append(' ');
+                }
+                sb.Append(current);
+            }
+            else
+            {
+                sb.Append('\n').Append(line);
+            }
+        }
+        return sb.ToString();
+    }
+
+    private const string SentenceEnds = ".!?:;؟。！？…\"”»)]";
+
+    private static bool ShouldJoin(string previous, string current)
+    {
+        if (previous.Length == 0 || current.Length == 0) return false; // a blank line: a new paragraph
+        if (SentenceEnds.Contains(previous[^1])) return false;
+        if (previous.Length < 25) return false; // a heading or a short line on purpose
+        // A list item or a new numbered point starts its own line.
+        char first = current[0];
+        if (first is '-' or '•' or '*' or '·' or '–' or '—' or '>' or '#') return false;
+        int digits = 0;
+        while (digits < current.Length && char.IsDigit(current[digits])) digits++;
+        if (digits > 0 && digits < current.Length && current[digits] is '.' or ')') return false;
+        return true;
     }
 }
 

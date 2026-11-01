@@ -83,10 +83,10 @@ public sealed class TranslatorWindow : FluentWindow
 
         Title = "Adawat Translator";
         Icon = AppIcon.ImageSource;
-        // Frosted glass where Windows supports it (11 22H2 and later), tinted with the accent;
-        // solid color elsewhere. (The glass once showed as an empty grey area at the bottom: that
-        // was the minimum height below, not the glass.)
-        WindowBackdropType = ThemeHelper.GlassSupported ? WindowBackdropType.Acrylic : WindowBackdropType.None;
+        // The "Glass" look: frosted glass where Windows supports it (11 22H2 and later) with a light
+        // veil of the chosen colors; the "Color" look, and older Windows, use solid color. (The glass
+        // once showed as an empty grey area at the bottom: that was the minimum height below.)
+        WindowBackdropType = ThemeHelper.TranslatorGlass ? WindowBackdropType.Acrylic : WindowBackdropType.None;
         WindowCornerPreference = WindowCornerPreference.Round;
         ExtendsContentIntoTitleBar = true;
         ResizeMode = ResizeMode.NoResize;
@@ -187,7 +187,7 @@ public sealed class TranslatorWindow : FluentWindow
 
         // ---- A hairline between text and translation; a thin bar runs along it while translating
         _progressBar = new Border { Width = 90, Height = 2, CornerRadius = new CornerRadius(1), HorizontalAlignment = HorizontalAlignment.Left };
-        _progressBar.SetResourceReference(Border.BackgroundProperty, "Adawat.Accent");
+        _progressBar.SetResourceReference(Border.BackgroundProperty, "Adawat.AccentFlow");
         _progressBar.RenderTransform = new TranslateTransform();
         _progressBar.Visibility = Visibility.Collapsed;
         var line = new Border { Height = 1, VerticalAlignment = VerticalAlignment.Center };
@@ -206,7 +206,7 @@ public sealed class TranslatorWindow : FluentWindow
         _resultCard.Children.Add(_translit);
         // A slim accent bar on the side the translation starts from.
         _resultFrame = new Border { BorderThickness = new Thickness(3, 0, 0, 0), Padding = new Thickness(12, 2, 0, 2), Child = _resultCard };
-        _resultFrame.SetResourceReference(Border.BorderBrushProperty, "Adawat.Accent");
+        _resultFrame.SetResourceReference(Border.BorderBrushProperty, "Adawat.AccentFlowDown");
 
         _secondLabel = PopupUi.Text("", 11, "Muted", FontWeights.SemiBold);
         _secondLabel.Margin = new Thickness(0, 14, 0, 3);
@@ -256,9 +256,15 @@ public sealed class TranslatorWindow : FluentWindow
             Focusable = false,
         };
         root.SizeChanged += (_, _) => FitHeight(root);
-        // The color of the whole window: see-through over the glass, solid without it.
-        var tint = new Border { Child = scroller };
-        tint.SetResourceReference(Border.BackgroundProperty, ThemeHelper.GlassSupported ? "Adawat.WashGlass" : "Adawat.Wash");
+        // The color of the whole window: see-through over the glass, solid without it, with a soft
+        // light along the top of the glass.
+        var sheen = new Border { IsHitTestVisible = false };
+        sheen.SetResourceReference(Border.BackgroundProperty, "Adawat.Sheen");
+        var layers = new Grid();
+        layers.Children.Add(sheen);
+        layers.Children.Add(scroller);
+        var tint = new Border { Child = layers };
+        tint.SetResourceReference(Border.BackgroundProperty, "Adawat.Background");
         Content = tint;
 
         _typingTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(750) };
@@ -306,19 +312,21 @@ public sealed class TranslatorWindow : FluentWindow
         {
             ApplyTheme();
             ApplyBorderColor();
+            var backdrop = ThemeHelper.TranslatorGlass ? WindowBackdropType.Acrylic : WindowBackdropType.None;
+            if (WindowBackdropType != backdrop) WindowBackdropType = backdrop;
             // The glass follows light/dark only when applied again.
-            if (ThemeHelper.GlassSupported && _hwnd != IntPtr.Zero) WindowBackdrop.ApplyBackdrop(this, WindowBackdropType.Acrylic);
+            else if (backdrop == WindowBackdropType.Acrylic && _hwnd != IntPtr.Zero) WindowBackdrop.ApplyBackdrop(this, WindowBackdropType.Acrylic);
             if (_statusIsError) SetStatus(_status.Text, error: true);
         };
     }
 
-    private void ApplyTheme() => ThemeHelper.ApplyPalette(Resources);
+    private void ApplyTheme() => ThemeHelper.ApplyTranslatorPalette(Resources);
 
     /// <summary>Windows 11 draws a thin border around the window; give it the palette's border color.</summary>
     private void ApplyBorderColor()
     {
         if (_hwnd == IntPtr.Zero) return;
-        var c = ThemeHelper.PaletteColor("AccentLine");
+        var c = ThemeHelper.TranslatorColor("AccentLine");
         int colorRef = c.R | (c.G << 8) | (c.B << 16);
         Native.DwmSetWindowAttribute(_hwnd, Native.DWMWA_BORDER_COLOR, ref colorRef, sizeof(int));
     }
@@ -507,13 +515,15 @@ public sealed class TranslatorWindow : FluentWindow
 
         try
         {
-            var result = await _translator.TranslateAsync(text, source, target, cts.Token);
+            // What is sent: lines broken in the middle of sentences (PDFs, web columns) joined again.
+            var request = T.JoinBrokenLines ? TextCleaner.JoinBrokenLines(text) : text;
+            var result = await _translator.TranslateAsync(request, source, target, cts.Token);
             bool usedFallback = false;
             if (source == Languages.Auto && Languages.Same(result.SourceLanguage, target)
                 && !string.IsNullOrEmpty(T.FallbackTargetLanguage) && !Languages.Same(T.FallbackTargetLanguage, target))
             {
                 // The text is already in the target language (e.g. Arabic text with Arabic as target).
-                result = await _translator.TranslateAsync(text, source, T.FallbackTargetLanguage, cts.Token);
+                result = await _translator.TranslateAsync(request, source, T.FallbackTargetLanguage, cts.Token);
                 usedFallback = true;
             }
             if (cts.IsCancellationRequested) return;
@@ -528,7 +538,7 @@ public sealed class TranslatorWindow : FluentWindow
             var second = T.SecondTargetLanguage;
             if (!string.IsNullOrEmpty(second) && !Languages.Same(second, result.TargetLanguage) && !Languages.Same(second, result.SourceLanguage))
             {
-                var extra = await _translator.TranslateAsync(text, source, second, cts.Token);
+                var extra = await _translator.TranslateAsync(request, source, second, cts.Token);
                 if (cts.IsCancellationRequested) return;
                 _secondLabel.Text = Languages.NameOf(second).ToUpperInvariant();
                 _secondBox.Text = extra.Translation;

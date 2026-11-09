@@ -10,6 +10,7 @@ using Adawat.ImageZoom;
 using Adawat.KeepAwake;
 using Adawat.KeyChanges;
 using Adawat.Ocr;
+using Adawat.QuickNote;
 using Adawat.Translator;
 using Adawat.UI;
 using Wpf.Ui.Appearance;
@@ -33,6 +34,7 @@ public sealed class App : Application, IAppHost
     private ImageZoomService _imageZoom = null!;
     private KeyRemapService _keyChanges = null!;
     private KeepAwakeService _keepAwake = null!;
+    private QuickNoteService _quickNote = null!;
     private DispatcherTimer _hookWatch = null!;
     private TrayIcon _tray = null!;
     private TranslatorWindow? _popup;
@@ -95,6 +97,7 @@ public sealed class App : Application, IAppHost
         _keyChanges = new KeyRemapService(Settings);
         _keepAwake = new KeepAwakeService(Settings, _messages, () => SettingsStore.Save(Settings));
         _keepAwake.Problem += (title, text) => Toast.Show(title, text, success: false, seconds: 8);
+        _quickNote = new QuickNoteService(Settings, SettingsChanged);
         _mouseHook = new MouseHook();
         _mouseHook.MouseEvent += OnMouse;
         _mouseHook.BlockWheel = _gestures.ShouldBlockWheel;
@@ -106,7 +109,8 @@ public sealed class App : Application, IAppHost
             openSettingsPage: page => OpenSettings(page),
             settingsChanged: SettingsChanged,
             exit: ExitApp,
-            keepAwake: _keepAwake);
+            keepAwake: _keepAwake,
+            quickNote: () => _quickNote.Show());
 
         _saveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
         _saveTimer.Tick += (_, _) =>
@@ -202,6 +206,7 @@ public sealed class App : Application, IAppHost
         Hotkeys.Set("translate", t.Enabled ? t.TranslateHotkey : null, () => Dispatcher.BeginInvoke(_translator.TranslateSelection));
         Hotkeys.Set("openbox", t.Enabled ? t.OpenBoxHotkey : null, () => Dispatcher.BeginInvoke(_translator.OpenBox));
         Hotkeys.Set("ocr", o.Enabled ? o.Hotkey : null, () => Dispatcher.BeginInvoke(_ocr.CaptureScreen));
+        Hotkeys.Set("quicknote", Settings.QuickNote.Enabled ? Settings.QuickNote.Hotkey : null, () => Dispatcher.BeginInvoke(_quickNote.Toggle));
 
         bool needHook = _translator.WantsMouseHook
                         || Settings.ImageZoom.Enabled // closes the picture preview on scroll
@@ -215,6 +220,7 @@ public sealed class App : Application, IAppHost
         _imageZoom.Apply();
         _keyChanges.Apply();
         _keepAwake.Apply();
+        _quickNote.Apply();
         StartupManager.ApplyRunKey(Settings);
         if (Settings.RunElevated && _appliedStartWithWindows != null && _appliedStartWithWindows != Settings.StartWithWindows)
         {
@@ -325,6 +331,7 @@ public sealed class App : Application, IAppHost
         try
         {
             _saveTimer.Stop();
+            _quickNote.Dispose();
             _keepAwake.Dispose(); // gives back the lid setting; saved just below
             SettingsStore.Save(Settings);
             _mouseHook.Dispose();

@@ -18,12 +18,13 @@ public sealed class TrayIcon : IDisposable
     private readonly ToolStripMenuItem _translateItem;
     private readonly ToolStripMenuItem _boxItem;
     private readonly ToolStripMenuItem _ocrItem;
+    private readonly ToolStripMenuItem _noteItem;
     private readonly ToolStripMenuItem _awakeItem;
     private readonly ToolStripMenuItem _awakeOff;
     private readonly KeepAwakeService _keepAwake;
 
     public TrayIcon(AppSettings settings, Action openBox, Action translateSelection, Action captureScreen,
-        Action openSettings, Action<string> openSettingsPage, Action settingsChanged, Action exit, KeepAwakeService keepAwake)
+        Action openSettings, Action<string> openSettingsPage, Action settingsChanged, Action exit, KeepAwakeService keepAwake, Action quickNote)
     {
         _settings = settings;
         _keepAwake = keepAwake;
@@ -41,6 +42,7 @@ public sealed class TrayIcon : IDisposable
         _translateItem = new ToolStripMenuItem("Translate selected text", null, (_, _) => translateSelection());
         _boxItem = new ToolStripMenuItem("Open translator", null, (_, _) => openBox());
         _ocrItem = new ToolStripMenuItem("Text from screen", null, (_, _) => captureScreen());
+        _noteItem = new ToolStripMenuItem("Quick note", null, (_, _) => quickNote());
         _translatorItem = new ToolStripMenuItem("Translator on", null, (_, _) =>
         {
             _settings.Translator.Enabled = !_settings.Translator.Enabled;
@@ -66,6 +68,7 @@ public sealed class TrayIcon : IDisposable
         menu.Items.Add(_boxItem);
         menu.Items.Add(_translateItem);
         menu.Items.Add(_ocrItem);
+        menu.Items.Add(_noteItem);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(_translatorItem);
         menu.Items.Add(_gesturesItem);
@@ -115,6 +118,8 @@ public sealed class TrayIcon : IDisposable
         _translateItem.ShortcutKeyDisplayString = _settings.Translator.TranslateHotkey;
         _boxItem.ShortcutKeyDisplayString = _settings.Translator.OpenBoxHotkey;
         _ocrItem.ShortcutKeyDisplayString = _settings.Ocr.Hotkey;
+        _noteItem.ShortcutKeyDisplayString = _settings.QuickNote.Hotkey;
+        _noteItem.Visible = _settings.QuickNote.Enabled;
         _awakeItem.Checked = _keepAwake.IsOn;
         _awakeItem.Text = _keepAwake.IsOn
             ? (_keepAwake.EndsAt is { } end ? $"Stay awake · {KeepAwakeService.Remaining(end - DateTime.Now)} left" : "Stay awake · on")

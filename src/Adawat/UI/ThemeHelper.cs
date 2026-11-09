@@ -255,11 +255,18 @@ public static class ThemeHelper
     /// Adawat.Sheen (a soft light along the top of the glass) and Adawat.AccentFlow / AccentFlowDown
     /// (both colors, across or downward, for thin lines and bars).
     /// </summary>
-    public static void ApplyTranslatorPalette(ResourceDictionary resources)
+    public static void ApplyTranslatorPalette(ResourceDictionary resources) =>
+        ApplyColoredPalette(resources, _translatorColors, TranslatorGlass);
+
+    /// <summary>The same palette in solid color (no glass) for another window, such as the quick note box.</summary>
+    public static void ApplyNotePalette(ResourceDictionary resources, TranslatorColors colors) =>
+        ApplyColoredPalette(resources, colors, glass: false);
+
+    private static void ApplyColoredPalette(ResourceDictionary resources, TranslatorColors colors, bool glass)
     {
         ApplyPalette(resources);
         bool dark = IsDark;
-        var (a, b) = TranslatorPair(_translatorColors);
+        var (a, b) = TranslatorPair(colors);
         if (dark)
         {
             a = Lighten(a, 0.3);
@@ -292,7 +299,7 @@ public static class ThemeHelper
             return brush;
         }
 
-        if (TranslatorGlass)
+        if (glass)
         {
             // Clear glass: only a light veil of color over the frosted backdrop, so what is behind
             // the window shows through. Clarity 1 is almost solid, 100 nearly clear.

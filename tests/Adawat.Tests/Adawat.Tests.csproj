@@ -16,6 +16,7 @@
     <Compile Include="..\..\src\Adawat\Core\Hotkey.cs" Link="Shared\Hotkey.cs" />
     <Compile Include="..\..\src\Adawat\KeyChanges\KeyRemapper.cs" Link="Shared\KeyRemapper.cs" />
     <Compile Include="..\..\src\Adawat\Translator\Languages.cs" Link="Shared\Languages.cs" />
+    <Compile Include="..\..\src\Adawat\QuickNote\NoteStore.cs" Link="Shared\NoteStore.cs" />
     <Compile Include="..\..\src\Adawat\Translator\GoogleTranslator.cs" Link="Shared\GoogleTranslator.cs" />
   </ItemGroup>
 

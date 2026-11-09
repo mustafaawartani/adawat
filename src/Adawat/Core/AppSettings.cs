@@ -34,6 +34,9 @@ public enum TranslatorColors
     Ocean, Sunset, Aurora, Berry, Sky, Peach, Forest, Dusk,
 }
 
+/// <summary>Which side of the quick note box the tabs are on.</summary>
+public enum TabSide { Left, Right }
+
 /// <summary>Which Google Translate service translates.</summary>
 public enum TranslationEngine
 {
@@ -59,6 +62,7 @@ public sealed class AppSettings
     public ImageZoomSettings ImageZoom { get; set; } = new();
     public KeyRemapSettings KeyChanges { get; set; } = new();
     public KeepAwakeSettings KeepAwake { get; set; } = new();
+    public QuickNoteSettings QuickNote { get; set; } = new();
 }
 
 public sealed class TranslatorSettings
@@ -252,6 +256,21 @@ public sealed class KeepAwakeSettings
     /// <summary>When staying awake ends (UTC), null when off or until turned off. Kept so a restart of Adawat goes on.</summary>
     public DateTime? Until { get; set; }
     public bool Active { get; set; }
+}
+
+/// <summary>Quick note: a small box to jot notes down, saved automatically.</summary>
+public sealed class QuickNoteSettings
+{
+    public bool Enabled { get; set; } = true;
+    public string Hotkey { get; set; } = "Alt+4";
+    public bool CloseOnClickOutside { get; set; } = true;
+    /// <summary>Keep the box above other windows and open when clicking elsewhere (the pin in the box).</summary>
+    public bool KeepOnTop { get; set; }
+    public TabSide TabsSide { get; set; } = TabSide.Right;
+    /// <summary>The color of the box; the same choices as the translator.</summary>
+    public TranslatorColors Colors { get; set; } = TranslatorColors.AppAccent;
+    public double FontSize { get; set; } = 15;
+    public string FontFamily { get; set; } = "Segoe UI";
 }
 
 /// <summary>Windows' "when I close the lid" setting of one power plan, as it was before Adawat changed it.</summary>

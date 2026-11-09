@@ -117,4 +117,17 @@ public class TranslatorTests
         Assert.Equal("en", result.SourceLanguage);
         Assert.Throws<TranslationException>(() => GoogleResponseParser.ParseSimple("{}", "x", "en", "es"));
     }
+
+    [Theory]
+    [InlineData("merceria la pena que OS contara detalles?", "es", "merceria la pena que os contara detalles?")]
+    [InlineData("OS lo digo en serio, de verdad", "es", "Os lo digo en serio, de verdad")]
+    [InlineData("eu gosto de OS ver aqui sempre", "pt", "eu gosto de os ver aqui sempre")]
+    [InlineData("merceria la pena que OS contara detalles?", "en", "merceria la pena que OS contara detalles?")]
+    [InlineData("TE QUIERO MUCHO", "es", "TE QUIERO MUCHO")]
+    [InlineData("la ONU y la OTAN se reunieron hoy", "es", "la ONU y la OTAN se reunieron hoy")]
+    [InlineData("merceria la pena que OS contara detalles?", "es-419", "merceria la pena que os contara detalles?")]
+    public void LowersSmallWordsTypedInCapitals(string text, string language, string expected)
+    {
+        Assert.Equal(expected, CaseFixer.Fix(text, language));
+    }
 }

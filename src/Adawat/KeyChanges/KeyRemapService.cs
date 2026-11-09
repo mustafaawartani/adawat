@@ -15,6 +15,7 @@ public sealed class KeyRemapService : IDisposable
     private readonly AppSettings _settings;
     private readonly KeyboardHook _hook = new();
     private readonly DispatcherTimer _foregroundWatch;
+    private readonly DispatcherTimer _renewHook;
     private readonly Dispatcher _dispatcher = Dispatcher.CurrentDispatcher;
     private bool _capturing;
 
@@ -25,6 +26,8 @@ public sealed class KeyRemapService : IDisposable
         _settings = settings;
         _foregroundWatch = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(200) };
         _foregroundWatch.Tick += (_, _) => UpdatePaused();
+        _renewHook = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMinutes(1) };
+        _renewHook.Tick += (_, _) => _hook.Renew();
     }
 
     public void Apply()
@@ -47,6 +50,8 @@ public sealed class KeyRemapService : IDisposable
     {
         if (_hook.Remapper.Count > 0 || _capturing) _hook.Start();
         else _hook.Stop();
+        if (_hook.Remapper.Count > 0) _renewHook.Start();
+        else _renewHook.Stop();
     }
 
     private void UpdatePaused()

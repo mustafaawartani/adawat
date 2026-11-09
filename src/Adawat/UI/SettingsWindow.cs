@@ -54,6 +54,7 @@ public sealed class SettingsWindow : FluentWindow
             ("Picture zoom", SymbolRegular.ImageSearch24, BuildImageZoom),
             ("Change keys", SymbolRegular.Keyboard24, BuildKeyChanges),
             ("Stay awake", SymbolRegular.WeatherMoonOff24, BuildKeepAwake),
+            ("Quick note", SymbolRegular.Note24, BuildQuickNote),
             ("History", SymbolRegular.History24, BuildHistory),
             ("About", SymbolRegular.Info24, BuildAbout),
         };
@@ -146,6 +147,7 @@ public sealed class SettingsWindow : FluentWindow
                      "Select text with the mouse  —  a small translate button appears next to it",
                      "Two-finger swipe left/right  —  back/forward;  pinch  —  zoom",
                      $"Rest the pointer on a picture  —  see it big;  {S.ImageZoom.SaveHotkey} saves it to Downloads, {S.ImageZoom.CopyHotkey} copies it",
+                     $"{S.QuickNote.Hotkey}  —  open the quick note box (notes are saved as you type)",
                      "Right-click the tray icon → Stay awake  —  keep the PC working with the lid closed for a while",
                  })
         {
@@ -621,6 +623,57 @@ public sealed class SettingsWindow : FluentWindow
         return p;
     }
 
+    private UIElement BuildQuickNote()
+    {
+        var q = S.QuickNote;
+        var p = new StackPanel();
+        p.Children.Add(Ui.Card(SymbolRegular.Note24, "Quick note",
+            "A small box to jot things down. Notes are saved as you type, in notes.json in the Adawat data folder.",
+            Ui.Toggle(q.Enabled, v => { q.Enabled = v; Changed(); })));
+        p.Children.Add(HotkeyCard(SymbolRegular.Keyboard24, "Shortcut", "Opens the note box. Press it again to hide the box.",
+            "quicknote", q.Hotkey, v => { q.Hotkey = v; Changed(); }));
+
+        p.Children.Add(Ui.SectionTitle("Behavior"));
+        p.Children.Add(Ui.Card(SymbolRegular.Dismiss24, "Close when clicking elsewhere",
+            "Off: the box stays open until you close it (Esc or the close button).",
+            Ui.Toggle(q.CloseOnClickOutside, v => { q.CloseOnClickOutside = v; Changed(); })));
+        p.Children.Add(Ui.Card(SymbolRegular.Pin24, "Keep on top",
+            "The box stays above other windows and does not close when you click elsewhere. Same as the pin in the box.",
+            Ui.Toggle(q.KeepOnTop, v => { q.KeepOnTop = v; Changed(); })));
+
+        p.Children.Add(Ui.SectionTitle("Look"));
+        p.Children.Add(Ui.Card(SymbolRegular.ArrowAutofitWidth24, "Tabs", "The strip with one tab per note.",
+            EnumCombo(q.TabsSide, new Dictionary<TabSide, string>
+            {
+                [TabSide.Right] = "On the right",
+                [TabSide.Left] = "On the left",
+            }, v => { q.TabsSide = v; Changed(); })));
+        p.Children.Add(Ui.Card(SymbolRegular.Color24, "Color", "\"App color\" follows the accent color in General.",
+            ColorChoicePicker(() => q.Colors, v => q.Colors = v)));
+        p.Children.Add(Ui.Card(SymbolRegular.TextFont24, "Text size", null,
+            SliderRow(11, 30, q.FontSize, v => $"{v:0}", v => { q.FontSize = Math.Round(v); Changed(); })));
+        p.Children.Add(Ui.Card(SymbolRegular.TextFont24, "Font", null,
+            EnumCombo(q.FontFamily, new Dictionary<string, string>
+            {
+                ["Segoe UI"] = "Segoe UI",
+                ["Calibri"] = "Calibri",
+                ["Arial"] = "Arial",
+                ["Tahoma"] = "Tahoma",
+                ["Times New Roman"] = "Times New Roman",
+                ["Consolas"] = "Consolas",
+            }, v => { q.FontFamily = v; Changed(); })));
+
+        p.Children.Add(Ui.SectionTitle("Notes"));
+        p.Children.Add(Ui.Card(SymbolRegular.FolderOpen24, "Open the notes folder",
+            "notes.json is in the same folder as the settings and the history.",
+            Ui.Button("Open folder", () =>
+            {
+                try { System.IO.Directory.CreateDirectory(AppPaths.DataFolder); } catch { }
+                OpenUri(AppPaths.DataFolder);
+            })));
+        return p;
+    }
+
     private UIElement BuildKeyChanges()
     {
         var k = S.KeyChanges;
@@ -682,9 +735,11 @@ public sealed class SettingsWindow : FluentWindow
         }, primary: true, icon: SymbolRegular.Add24);
         var swap = Ui.Button("Swap Ctrl and Alt", () =>
         {
-            k.Remaps.RemoveAll(r => r.From is 0xA2 or 0xA4);
+            k.Remaps.RemoveAll(r => r.From is 0xA2 or 0xA4 or 0xA3 or 0xA5);
             k.Remaps.Add(new KeyRemap { From = 0xA4, To = 0xA2, Keep = KeyRemap.DefaultAltKeep() }); // Left Alt  -> Left Ctrl
             k.Remaps.Add(new KeyRemap { From = 0xA2, To = 0xA4 }); // Left Ctrl -> Left Alt
+            k.Remaps.Add(new KeyRemap { From = 0xA5, To = 0xA3, Keep = KeyRemap.DefaultAltKeep() }); // Right Alt  -> Right Ctrl
+            k.Remaps.Add(new KeyRemap { From = 0xA3, To = 0xA5 }); // Right Ctrl -> Right Alt
             k.Enabled = true;
             Save();
             ShowPage("Change keys");
@@ -900,9 +955,10 @@ public sealed class SettingsWindow : FluentWindow
     /// The translator's colors: the app's accent, single colors and two-color pairs (split swatches),
     /// in two rows; the chosen one has a ring around it.
     /// </summary>
-    private UIElement TranslatorColorPicker()
+    private UIElement TranslatorColorPicker() => ColorChoicePicker(() => S.Translator.Colors, v => S.Translator.Colors = v);
+
+    private UIElement ColorChoicePicker(Func<TranslatorColors> get, Action<TranslatorColors> set)
     {
-        var t = S.Translator;
         var rows = new StackPanel();
         var singles = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
         var pairs = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 4, 0, 0) };
@@ -913,7 +969,7 @@ public sealed class SettingsWindow : FluentWindow
         void Refresh()
         {
             var ringColor = new SolidColorBrush(ThemeHelper.AccentColor);
-            foreach (var (choice, ring) in rings) ring.BorderBrush = choice == t.Colors ? ringColor : Brushes.Transparent;
+            foreach (var (choice, ring) in rings) ring.BorderBrush = choice == get() ? ringColor : Brushes.Transparent;
         }
 
         void Add(Panel row, TranslatorColors choice, Brush fill, string name)
@@ -935,7 +991,7 @@ public sealed class SettingsWindow : FluentWindow
             ring.PreviewMouseLeftButtonDown += (_, e) =>
             {
                 e.Handled = true;
-                t.Colors = choice;
+                set(choice);
                 Refresh();
                 Changed();
             };

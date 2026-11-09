@@ -15,6 +15,7 @@ public sealed class KeyboardHook : IDisposable
 {
     private const int WH_KEYBOARD_LL = 13;
     private const uint LLKHF_UP = 0x80;
+    private const uint WM_RENEW_HOOK = 0x8000 + 0x41; // WM_APP + 0x41
 
     [StructLayout(LayoutKind.Sequential)]
     private struct KBDLLHOOKSTRUCT
@@ -59,6 +60,11 @@ public sealed class KeyboardHook : IDisposable
             ready.Set();
             while (Native.GetMessage(out var msg, IntPtr.Zero, 0, 0) > 0)
             {
+                if (msg.hwnd == IntPtr.Zero && msg.message == WM_RENEW_HOOK)
+                {
+                    RenewOnHookThread();
+                    continue;
+                }
                 Native.TranslateMessage(ref msg);
                 Native.DispatchMessage(ref msg);
             }
@@ -89,6 +95,25 @@ public sealed class KeyboardHook : IDisposable
         if (_thread == null) return;
         Stop();
         Start();
+    }
+
+    /// <summary>
+    /// Windows silently removes a keyboard hook that once answered too slowly (for example while the
+    /// PC was busy), and then keys quietly go back to normal. Renewing it now and then keeps the key
+    /// changes working. The new hook is installed before the old one is removed, so no key is missed.
+    /// </summary>
+    public void Renew()
+    {
+        if (_thread != null) Native.PostThreadMessage(_threadId, WM_RENEW_HOOK, IntPtr.Zero, IntPtr.Zero);
+    }
+
+    private void RenewOnHookThread()
+    {
+        var fresh = SetWindowsHookEx(WH_KEYBOARD_LL, _proc, Native.GetModuleHandle(null), 0);
+        if (fresh == IntPtr.Zero) return; // keep the old one
+        var old = _hook;
+        _hook = fresh;
+        if (old != IntPtr.Zero) Native.UnhookWindowsHookEx(old);
     }
 
     /// <summary>The next key pressed is swallowed and passed to <paramref name="onKey"/> (on the hook thread).</summary>

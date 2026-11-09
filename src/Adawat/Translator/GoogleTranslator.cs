@@ -68,6 +68,21 @@ public sealed class GoogleTranslator
         text = text.Trim();
         if (text.Length == 0) throw new TranslationException("Nothing to translate.");
 
+        // A small word typed in capitals ("que OS contara") is read by Google as an abbreviation
+        // ("operating system"); the website corrects this by itself, so Adawat does the same.
+        var fixedText = CaseFixer.Fix(text, source);
+        var result = await TranslateCoreAsync(fixedText, source, target, token);
+        if (source == "auto" && fixedText == text)
+        {
+            var again = CaseFixer.Fix(text, result.SourceLanguage);
+            if (again != text) result = await TranslateCoreAsync(again, source, target, token);
+        }
+        return result with { SourceText = text };
+    }
+
+    private async Task<TranslationResult> TranslateCoreAsync(string text, string source, string target, CancellationToken token)
+    {
+
         if (UseWebsite && DateTime.UtcNow >= _websiteOffUntil)
         {
             try
@@ -351,6 +366,73 @@ public static class WebsiteResponseParser
     private static string? Text(JsonElement element) => element.ValueKind == JsonValueKind.String ? element.GetString() : null;
 
     private static string? NonEmpty(string? s) => string.IsNullOrWhiteSpace(s) ? null : s;
+}
+
+/// <summary>
+/// Lowers small everyday words typed in capitals inside normal text, such as Spanish "os" ("you")
+/// in "que OS contara", which Google otherwise reads as an abbreviation ("OS" = operating system).
+/// Only words that are almost never abbreviations in that language, and only when the rest of the
+/// text is written normally (a heading all in capitals is left as it is).
+/// </summary>
+public static class CaseFixer
+{
+    private static readonly Dictionary<string, HashSet<string>> SmallWords = new()
+    {
+        ["es"] = new() { "os", "nos", "te", "me", "se", "le", "les", "lo", "los", "las", "el", "y", "o", "que", "de", "del", "al", "en", "un", "una", "su", "sus", "mi", "mis", "tu", "tus", "ya", "muy", "con", "por", "para", "pero", "como", "si", "es", "son", "fue", "hay" },
+        ["pt"] = new() { "os", "as", "nos", "te", "me", "se", "lhe", "lhes", "o", "a", "e", "que", "de", "do", "da", "dos", "das", "em", "no", "na", "um", "uma", "seu", "sua", "meu", "minha", "com", "por", "para", "mas", "como", "se", "foi" },
+        ["fr"] = new() { "on", "nous", "vous", "te", "me", "se", "le", "les", "et", "ou", "que", "qui", "de", "des", "du", "au", "aux", "en", "un", "une", "son", "sa", "ses", "mon", "ma", "mes", "ton", "ta", "tes", "avec", "pour", "mais", "comme", "est", "sont" },
+        ["it"] = new() { "vi", "ci", "ti", "mi", "si", "gli", "lo", "il", "e", "o", "che", "di", "del", "della", "al", "alla", "in", "un", "una", "suo", "sua", "mio", "mia", "con", "per", "ma", "come", "sono" },
+    };
+
+    public static string Fix(string text, string language)
+    {
+        if (string.IsNullOrEmpty(language)) return text;
+        var dash = language.IndexOf('-');
+        if (dash > 0) language = language[..dash];
+        if (!SmallWords.TryGetValue(language.ToLowerInvariant(), out var words)) return text;
+
+        int upper = 0, lower = 0;
+        foreach (var c in text)
+        {
+            if (char.IsUpper(c)) upper++;
+            else if (char.IsLower(c)) lower++;
+        }
+        // Mostly capitals (a heading, shouting): nothing to correct.
+        if (lower < 8 || upper * 2 > lower) return text;
+
+        var sb = new StringBuilder(text);
+        int i = 0;
+        while (i < text.Length)
+        {
+            if (!char.IsLetter(text[i])) { i++; continue; }
+            int start = i;
+            while (i < text.Length && char.IsLetter(text[i])) i++;
+            int length = i - start;
+            if (length < 2) continue; // "A", "O", "Y" may start a sentence
+            var word = text.Substring(start, length);
+            bool allCaps = true;
+            foreach (var c in word) if (!char.IsUpper(c)) { allCaps = false; break; }
+            if (allCaps && words.Contains(word.ToLowerInvariant()))
+            {
+                var lowered = word.ToLowerInvariant();
+                // Keep the first letter a capital at the start of a sentence.
+                if (StartsSentence(text, start)) lowered = char.ToUpperInvariant(lowered[0]) + lowered[1..];
+                for (int k = 0; k < length; k++) sb[start + k] = lowered[k];
+            }
+        }
+        return sb.ToString();
+    }
+
+    private static bool StartsSentence(string text, int index)
+    {
+        for (int k = index - 1; k >= 0; k--)
+        {
+            var c = text[k];
+            if (char.IsWhiteSpace(c) || c is '¿' or '¡' or '"' or '«' or '(') continue;
+            return c is '.' or '!' or '?' or '\n';
+        }
+        return true;
+    }
 }
 
 /// <summary>

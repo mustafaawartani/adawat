@@ -30,6 +30,7 @@ public readonly record struct KeyRule(int From, int To, ISet<int>? Keep = null);
 public sealed class KeyRemapper
 {
     public const int VK_LCONTROL = 0xA2;
+    public const int VK_RMENU = 0xA5;
     /// <summary>The left Ctrl that Windows adds in front of AltGr on many keyboard layouts.</summary>
     private const int AltGrFakeCtrlScanCode = 0x21D;
 
@@ -38,6 +39,7 @@ public sealed class KeyRemapper
     // Keys held down right now and what is being sent for them, so the release always matches the
     // press even if the rules or the app in front changed in between.
     private readonly Dictionary<int, int> _held = new();
+    private bool _swallowFakeCtrl;
 
     /// <summary>True while an app in the "keys are not changed" list is in front: new presses pass through.</summary>
     public bool Paused { get; set; }
@@ -68,9 +70,19 @@ public sealed class KeyRemapper
     public KeyDecision Process(int vk, int scanCode, bool up, bool sentByAdawat)
     {
         if (sentByAdawat) return KeyDecision.Pass;
-        if (vk == VK_LCONTROL && scanCode == AltGrFakeCtrlScanCode) return KeyDecision.Pass;
         lock (_gate)
         {
+            // Keyboard layouts with AltGr (Spanish, French, German…) send a hidden Left Ctrl with
+            // every Right Alt press, so Right Alt works as Ctrl + Alt there but as a plain Alt with
+            // the English layout. The hidden Ctrl is never changed itself; when Right Alt has its own
+            // change it is dropped, so Right Alt acts the same with every layout.
+            if (vk == VK_LCONTROL && scanCode == AltGrFakeCtrlScanCode)
+            {
+                if (!up) _swallowFakeCtrl = !Paused && _rules.ContainsKey(VK_RMENU);
+                var swallow = _swallowFakeCtrl;
+                if (up) _swallowFakeCtrl = false;
+                return swallow ? KeyDecision.Block : KeyDecision.Pass;
+            }
             if (up)
             {
                 return _held.Remove(vk, out var sent) ? KeyDecision.Replace(sent, up: true) : KeyDecision.Pass;
@@ -117,6 +129,7 @@ public sealed class KeyRemapper
                 if (sent != 0 && !keys.Contains(sent)) keys.Add(sent);
             }
             _held.Clear();
+            _swallowFakeCtrl = false;
             return keys;
         }
     }

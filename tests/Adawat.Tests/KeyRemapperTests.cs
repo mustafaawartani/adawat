@@ -132,4 +132,27 @@ public class KeyRemapperTests
         r.SetRules(new[] { new KeyRule(LAlt, LCtrl, new HashSet<int> { Tab }) });
         Same(KeyDecision.Pass, r.Process(Tab, 0x0F, up: false, sentByAdawat: false));
     }
+
+    [Fact]
+    public void AltGrsHiddenCtrlIsDroppedWhenRightAltIsChanged()
+    {
+        const int RCtrl = 0xA3, RAlt = 0xA5;
+        var r = new KeyRemapper();
+        r.SetRules(new[] { (RAlt, RCtrl), (RCtrl, RAlt) });
+        Same(KeyDecision.Block, r.Process(LCtrl, 0x21D, up: false, sentByAdawat: false));
+        Same(KeyDecision.Replace(RCtrl, false), r.Process(RAlt, 0x38, up: false, sentByAdawat: false));
+        Same(KeyDecision.Block, r.Process(LCtrl, 0x21D, up: true, sentByAdawat: false));
+        Same(KeyDecision.Replace(RCtrl, true), r.Process(RAlt, 0x38, up: true, sentByAdawat: false));
+    }
+
+    [Fact]
+    public void AltGrsHiddenCtrlPassesWhenPaused()
+    {
+        var r = new KeyRemapper();
+        r.SetRules(new[] { (0xA5, 0xA3) });
+        r.Paused = true;
+        Same(KeyDecision.Pass, r.Process(LCtrl, 0x21D, up: false, sentByAdawat: false));
+        r.Paused = false;
+        Same(KeyDecision.Pass, r.Process(LCtrl, 0x21D, up: true, sentByAdawat: false));
+    }
 }
